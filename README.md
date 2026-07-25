@@ -1,7 +1,7 @@
 # The Solving Room
 
-Five twisty puzzles that scramble and solve themselves in your browser —
-a 2×2, 3×3, 4×4, 5×5 and a megaminx — with the real mathematics on
+Seven twisty puzzles that scramble and solve themselves in your browser —
+a 2×2, 3×3, 4×4, 5×5, a megaminx, a pyraminx and a skewb — with the real mathematics on
 display: God's algorithm, Kociemba's two-phase algorithm, a map of every
 position, a live statistical engine, a camera scanner, a patient
 turn-by-turn teacher, a sequence lab, and an augmented-reality door.

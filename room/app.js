@@ -18,7 +18,17 @@ function hex2rgb(h){
   return [parseInt(h.slice(1,3),16)/255, parseInt(h.slice(3,5),16)/255, parseInt(h.slice(5,7),16)/255];
 }
 
+function hasSolver(k){ return k==="cube2"||k==="cube3"||k==="pyra"; }
+
+var PYRA_PAL = ["#3fc472","#ff5d5d","#5aa2ff","#f5b63f"];
+
 var KINDS = {
+  pyra:{ label:"▲ Pyraminx", scramble:14, pal:PYRA_PAL,
+    method:"God's algorithm — provably optimal",
+    fact:"933,120 positions (the four tips add a trivial ×81) · God's number: 11 · solved by breadth-first search over every state" },
+  skewb:{ label:"◆ Skewb", scramble:11, pal:CUBE_PAL,
+    method:"Ariadne's thread — the scramble, inverted",
+    fact:"3,149,280 positions · God's number: 11 · its own God table is a coming chapter — for now it retraces the thread" },
   cube2:{ label:"2×2", scramble:16, pal:CUBE_PAL,
     method:"God's algorithm — provably optimal",
     fact:"3,674,160 positions · God's number: 11 · solved by breadth-first search over every state" },
@@ -173,7 +183,9 @@ function buildGeometry(){
   for(i=0;i<P.stickers.length;i++){
     var st=P.stickers[i];
     var poly=st.poly, k=poly.length, n=st.normal, d=st.depth;
-    var bot=poly.map(function(p){ return [p[0]-n[0]*d, p[1]-n[1]*d, p[2]-n[2]*d]; });
+    var bot=P.taper
+      ? poly.map(function(p){ return [p[0]*P.taper, p[1]*P.taper, p[2]*P.taper]; })
+      : poly.map(function(p){ return [p[0]-n[0]*d, p[1]-n[1]*d, p[2]-n[2]*d]; });
     var v0=pos.length/3, i0=idx.length;
 
     /* top fan (coloured) */
@@ -748,12 +760,15 @@ var walkReqId=0, walkSteps=null, threadRadii=null;
 var MAP_CAPTIONS={
   cube2:"every dot is a real position of the pocket cube · shells = exact turns from home (the God table)",
   cube3:"nebula: all 1,082,565 orientation×slice coordinates, shells = proven turns to G1 · nucleus: the corner-permutation space inside G1",
+  pyra:"every dot is a real position of the pyraminx (tips aside) · shells = exact turns from home (the God table)",
   other:"the fog is an impression of the word tree — the glowing thread through it is real"
 };
 
 function mapStride(){
   var small=Math.min(innerWidth,innerHeight)<700;
-  return kind==="cube2" ? (small?4:2) : (small?2:1);
+  if(kind==="cube2") return small?4:2;
+  if(kind==="pyra") return small?2:1;
+  return small?2:1;
 }
 
 /* the big puzzles can't chart their true space (10⁴⁵⁺ states), so the
@@ -795,7 +810,7 @@ function ensureMap(){
 
 function requestCloud(){
   if(!mapView||!mapOpen) return;
-  if(kind==="cube2"||kind==="cube3"){
+  if(hasSolver(kind)){
     mapCap.textContent="charting the space…";
     if(mapCloudKind!==kind)
       getWorker().postMessage({cmd:"map", kind:kind, stride:mapStride()});
@@ -814,7 +829,7 @@ function requestCloud(){
 function requestWalk(moves){
   if(!mapView&&!statsOpen) return;
   walkSteps=null; threadRadii=null; hereNow=null;
-  if(kind==="cube2"||kind==="cube3"){
+  if(hasSolver(kind)){
     var id=++walkReqId;
     getWorker().postMessage({cmd:"walk", kind:kind, id:id,
       colors:Array.prototype.slice.call(colors),
@@ -849,7 +864,7 @@ function renderStats(){
   if(!statsOpen) return;
   statBars.innerHTML=""; statLines.innerHTML="";
   var s=statsCache[kind];
-  if(kind==="cube2"||kind==="cube3"){
+  if(hasSolver(kind)){
     if(!s){ statCap.textContent="counting every state…"; return; }
     var main=s.main, i;
     var logMax=Math.log10(Math.max.apply(null,main.hist)+1);
@@ -864,9 +879,11 @@ function renderStats(){
     }
     statCap.textContent= kind==="cube2"
       ? "all "+main.total.toLocaleString()+" positions, by exact distance from home (log scale)"
+      : kind==="pyra"
+      ? "all "+main.total.toLocaleString()+" positions (tips aside), by exact distance from home (log scale)"
       : "all "+main.total.toLocaleString()+" phase-1 coordinates, by proven minimum turns to G1 (log scale)";
     var l1=document.createElement("p");
-    l1.innerHTML= kind==="cube2"
+    l1.innerHTML= (kind==="cube2"||kind==="pyra")
       ? "a random scramble lands, on average, <b>"+main.mean.toFixed(3)+" turns</b> from home"
       : "a random state needs, on average, at least <b>"+main.mean.toFixed(3)+" turns</b> to reach G1"+
         " · inside G1: at least <b>"+s.core.mean.toFixed(2)+"</b> more";
@@ -898,7 +915,7 @@ function renderStats(){
 }
 
 function renderStatsLive(){
-  if(!statsOpen||!(kind==="cube2"||kind==="cube3")) return;
+  if(!statsOpen||!hasSolver(kind)) return;
   var s=statsCache[kind];
   var here=document.getElementById("statHere");
   if(!s||!here) return;
@@ -915,7 +932,7 @@ function renderStatsLive(){
   var pct=100*cum/main.total;
   var bar=statBars.children[d];
   if(bar) bar.classList.add("here");
-  if(kind==="cube2"){
+  if(kind==="cube2"||kind==="pyra"){
     here.innerHTML= d===0 ? "you are <b>home</b> — the single state at distance zero"
       : "you are here: <b>"+d+" turns out</b> — deeper than <b>"+pct.toFixed(2)+"%</b> of all positions";
   } else {
@@ -927,7 +944,7 @@ function renderStatsLive(){
 }
 
 function requestLocate(){
-  if(!statsOpen||!(kind==="cube2"||kind==="cube3")) return;
+  if(!statsOpen||!hasSolver(kind)) return;
   var id=++locateId;
   getWorker().postMessage({cmd:"locate", kind:kind, id:id,
                            colors:Array.prototype.slice.call(colors)});
@@ -1072,6 +1089,19 @@ function animTick(now){
 /* ---------- the teacher's voice ---------- */
 var FACE_WORDS={U:"top",D:"bottom",R:"right",L:"left",F:"front",B:"back"};
 function moveDesc(name){
+  if(kind==="pyra"){
+    var mp=/^([ULRBulrb])(')?$/.exec(name);
+    if(mp){
+      var tip=/[ulrb]/.test(mp[1]);
+      return (tip?"spin just the "+mp[1]+" tip ":"turn the "+mp[1].toUpperCase()+
+        " corner — both layers — ")+"a third "+(mp[2]?"counter-clockwise":"clockwise");
+    }
+  }
+  if(kind==="skewb"){
+    var ms=/^([URLB])(')?$/.exec(name);
+    if(ms) return "turn the "+ms[1]+" corner half of the cube a third "+
+      (ms[2]?"counter-clockwise":"clockwise");
+  }
   var mg=/^([A-L])(\+\+|\+|−−|−|--|-)$/.exec(name);
   if(mg){
     var amt5 = mg[2]==="+" ? "one fifth clockwise"
@@ -1268,7 +1298,7 @@ var worker=null, solveId=0, pendingSolve=null, workerReady={};
 var checkId=0, pendingChecks={};
 function getWorker(){
   if(worker) return worker;
-  worker=new Worker("worker.js?v=3");
+  worker=new Worker("worker.js?v=4");
   worker.onmessage=function(e){
     var d=e.data;
     if(d.type==="progress"){
@@ -1344,7 +1374,7 @@ function doScramble(showman){
 }
 function doSolve(){
   if(P.isSolved(colors)){ setStatus("already home — scramble it first"); return; }
-  if(kind==="cube2"||kind==="cube3"){
+  if(hasSolver(kind)){
     setBusy(true);
     setStatus("reading the stickers…");
     var id=++solveId;
@@ -1402,7 +1432,7 @@ btnStats.addEventListener("click", function(){
   document.body.classList.toggle("stats-on", statsOpen);
   btnStats.textContent=statsOpen?"fold the numbers ✦":"the numbers ✦";
   if(statsOpen){
-    if((kind==="cube2"||kind==="cube3")&&!statsCache[kind])
+    if(hasSolver(kind)&&!statsCache[kind])
       getWorker().postMessage({cmd:"stats", kind:kind});
     renderStats();
     requestLocate();
@@ -1447,7 +1477,7 @@ function setKind(k){
   btnSpecimen.hidden = !(k==="cube2"||k==="cube3");
   btnSpecimen.textContent = k==="cube2" ? "the antipode ✦" : "the superflip ✦";
   if(statsOpen){
-    if((k==="cube2"||k==="cube3")&&!statsCache[k])
+    if(hasSolver(k)&&!statsCache[k])
       getWorker().postMessage({cmd:"stats", kind:k});
     renderStats();
     requestLocate();
@@ -1462,7 +1492,7 @@ function setKind(k){
   setBusy(false);
   elTicker.classList.remove("show");
   /* warm the solver while nobody's looking */
-  if(k==="cube2"||k==="cube3") getWorker().postMessage({cmd:"prep", kind:k});
+  if(hasSolver(k)) getWorker().postMessage({cmd:"prep", kind:k});
 }
 
 /* ---------- render loop ---------- */
@@ -1642,7 +1672,9 @@ function openScore(){
     });
   }
   document.getElementById("scoreHint").textContent =
-    kind==="mega" ? "megaminx notation: faces A–L with +, ++, − or −− (fifths of a turn)"
+    kind==="pyra" ? "pyraminx notation: corners U L R B (both layers), tips u l r b, ' for counter-clockwise"
+    : kind==="skewb" ? "skewb notation: corners U R L B, ' for counter-clockwise (thirds of a turn)"
+    : kind==="mega" ? "megaminx notation: faces A–L with +, ++, − or −− (fifths of a turn)"
     : (kind==="cube4"||kind==="cube5") ? "notation: U R F D L B, with ' and 2 — and 2R, 3L for inner layers"
     : "notation: U R F D L B · ' means counter-clockwise · 2 means a half turn";
   scoreParse();

@@ -524,7 +524,140 @@ function Solver2(ops, dbl){
   return self;
 }
 
+/* ================= SolverPyra: God's algorithm for the pyraminx =================
+   933,120 real positions (tips aside): 4 axial-centre orientations (3⁴)
+   × 6 edges (even permutations × even flips). Encoded generously as
+   720·64·81 = 3,732,480 slots; the unreachable slots stay at 255. */
+
+/* read the pyraminx off its stickers.
+   P: the engine puzzle (needs .pieces and .stickers). Returns
+   { tips:[0..2]×4, ax:[0..2]×4, ep:[6], eo:[6] } — all position-indexed. */
+function analyzePyra(P, colors){
+  var pieces=P.pieces, i, j, s;
+  function homeFace(si){ return P.stickers[si].face; }
+  /* a piece that only spins in place: how many cyclic steps its
+     colours sit from home */
+  function spinOf(stks){
+    for(s=0;s<3;s++){
+      var ok=true;
+      for(i=0;i<3&&ok;i++)
+        if(colors[stks[i]] !== homeFace(stks[(i+s)%3])) ok=false;
+      if(ok) return s;
+    }
+    throw new Error("pyraminx piece colours don't spin from home");
+  }
+  var tips=pieces.tips.map(function(t){ return spinOf(t.stickers); });
+  var ax=pieces.axials.map(function(t){ return spinOf(t.stickers); });
+
+  var byKey={};
+  pieces.edges.forEach(function(e, idx){
+    byKey[e.faces.slice().sort().join(",")]=idx;
+  });
+  var ep=new Array(6), eo=new Array(6);
+  for(i=0;i<6;i++){
+    var e=pieces.edges[i];
+    var c0=colors[e.stickers[0]], c1=colors[e.stickers[1]];
+    var k=byKey[[c0,c1].slice().sort(function(a,b){return a-b;}).join(",")];
+    if(k===undefined) throw new Error("unrecognised pyraminx edge");
+    ep[i]=k;
+    eo[i]= (c0===homeFace(pieces.edges[k].stickers[0])) ? 0 : 1;
+  }
+  return { tips:tips, ax:ax, ep:ep, eo:eo };
+}
+
+/* ops: 8 big moves as {name, state:analyzePyra-of-single-move};
+   tipOps: per vertex, the axial spin delta of its n=1 tip move. */
+function SolverPyra(ops){
+  var self={ ready:false };
+  var N_P=720, N_EO=64, N_AX=81;
+  var depth, epMove, eoMove, axMove;
+
+  function encAx(ax){ return ax[0]+3*(ax[1]+3*(ax[2]+3*ax[3])); }
+  function encEo(eo){
+    var x=0;
+    for(var i=0;i<6;i++) x|=eo[i]<<i;
+    return x;
+  }
+  function encode(st){
+    return (permRank(st.ep)*N_EO + encEo(st.eo))*N_AX + encAx(st.ax);
+  }
+  self.encode=function(st){
+    var id=encode(st);
+    return { id:id, d:depth[id] };
+  };
+  self.table=function(){ return depth; };
+
+  self.init=function(progress){
+    var i, m, k;
+    var p6=new Array(6), p6b=new Array(6);
+    progress&&progress(0.05,"edge tables");
+    epMove=new Int32Array(N_P*8);
+    for(i=0;i<N_P;i++){
+      permUnrank(i,6,p6);
+      for(m=0;m<8;m++){
+        var op=ops[m].state;
+        for(k=0;k<6;k++) p6b[k]=p6[op.ep[k]];
+        epMove[i*8+m]=permRank(p6b);
+      }
+    }
+    eoMove=new Int32Array(N_EO*8);
+    for(i=0;i<N_EO;i++){
+      for(m=0;m<8;m++){
+        var op2=ops[m].state, x=0;
+        for(k=0;k<6;k++) x|=(((i>>op2.ep[k])&1)^op2.eo[k])<<k;
+        eoMove[i*8+m]=x;
+      }
+    }
+    axMove=new Int32Array(N_AX*8);
+    for(i=0;i<N_AX;i++){
+      var a=[i%3,(i/3|0)%3,(i/9|0)%3,(i/27|0)%3];
+      for(m=0;m<8;m++){
+        var op3=ops[m].state;
+        axMove[i*8+m]=((a[0]+op3.ax[0])%3)+3*(((a[1]+op3.ax[1])%3)
+          +3*(((a[2]+op3.ax[2])%3)+3*((a[3]+op3.ax[3])%3)));
+      }
+    }
+    progress&&progress(0.2,"breadth-first walk of all 933,120 states");
+    var SIZE=N_P*N_EO*N_AX;
+    depth=new Uint8Array(SIZE); depth.fill(255);
+    var q=new Int32Array(933120), head=0, tail=0;
+    depth[0]=0; q[tail++]=0;
+    while(head<tail){
+      var s2=q[head++];
+      var ax0=s2%N_AX, rest=(s2/N_AX)|0, eo0=rest%N_EO, ep0=(rest/N_EO)|0;
+      var d=depth[s2]+1;
+      for(m=0;m<8;m++){
+        var nxt=(epMove[ep0*8+m]*N_EO+eoMove[eo0*8+m])*N_AX+axMove[ax0*8+m];
+        if(depth[nxt]===255){ depth[nxt]=d; q[tail++]=nxt; }
+      }
+    }
+    self.reached=tail;
+    progress&&progress(1,"ready");
+    self.ready=true;
+  };
+
+  /* optimal big-move solution by walking downhill */
+  self.solve=function(st){
+    if(!self.ready) throw new Error("pyraminx solver not initialised");
+    var ep=permRank(st.ep), eo=encEo(st.eo), ax=encAx(st.ax);
+    var moves=[], guard=0;
+    while(depth[(ep*N_EO+eo)*N_AX+ax]>0){
+      var d=depth[(ep*N_EO+eo)*N_AX+ax], taken=-1;
+      for(var m=0;m<8;m++){
+        var e2=epMove[ep*8+m], o2=eoMove[eo*8+m], a2=axMove[ax*8+m];
+        if(depth[(e2*N_EO+o2)*N_AX+a2]===d-1){ ep=e2; eo=o2; ax=a2; taken=m; break; }
+      }
+      if(taken<0||++guard>14) throw new Error("pyraminx descent failed");
+      moves.push(ops[taken].name);
+    }
+    return moves;
+  };
+
+  return self;
+}
+
 return { analyze:analyze, applyOp:applyOp, Solver3:Solver3, Solver2:Solver2,
+         analyzePyra:analyzePyra, SolverPyra:SolverPyra,
          permRank:permRank, permUnrank:permUnrank,
          combRank:combRank, combUnrank:combUnrank };
 }));

@@ -388,6 +388,182 @@ function buildMegaminx(){
   return P;
 }
 
+/* ================= pyraminx ================= */
+
+function buildPyraminx(){
+  var a=1.62;
+  var rB=Math.sqrt(8)/3*a;               /* base ring radius */
+  var V={
+    U:[0, a, 0],
+    R:[ rB*Math.cos(Math.PI/6), -a/3,  rB*Math.sin(Math.PI/6)],
+    L:[-rB*Math.cos(Math.PI/6), -a/3,  rB*Math.sin(Math.PI/6)],
+    B:[0, -a/3, -rB]
+  };
+  var letters=["U","L","R","B"];
+  var verts=letters.map(function(k){ return V[k]; });
+
+  var stickers=[], i, j, f;
+  /* four faces: each opposite one vertex */
+  for(f=0; f<4; f++){
+    var tri=[];
+    for(i=0;i<4;i++) if(i!==f) tri.push(verts[i]);
+    var A=tri[0], Bv=tri[1], C=tri[2];
+    var nrm=norm(cross(sub(Bv,A), sub(C,A)));
+    if(dot(nrm, centroid(tri))<0){ nrm=scl(nrm,-1); var t2=Bv; Bv=C; C=t2; }
+    function pt(iu, iv){
+      return add(A, add(scl(sub(Bv,A), iu/3), scl(sub(C,A), iv/3)));
+    }
+    function push(poly){
+      var ctr=centroid(poly);
+      stickers.push({ poly:windPoly(chamferPoly(insetPoly(poly,0.94),0.09), nrm),
+                      center:ctr, normal:nrm.slice(), face:f, depth:0.3 });
+    }
+    for(var iu=0; iu<3; iu++) for(var iv=0; iv<3-iu; iv++){
+      push([pt(iu,iv), pt(iu+1,iv), pt(iu,iv+1)]);
+      if(iu+iv<2) push([pt(iu+1,iv), pt(iu+1,iv+1), pt(iu,iv+1)]);
+    }
+  }
+
+  /* twists: about each vertex axis — the big two-layer block and the tip.
+     the cuts land on the face grid lines: heights 5R/9 and R/9 */
+  var tol=minStickerGap(stickers)*0.4;
+  var twists=[], k;
+  for(k=0;k<4;k++){
+    var u=norm(verts[k]);
+    var R=dot(verts[k],u);
+    [5*R/9, R/9].forEach(function(cut, deep){
+      var members=[];
+      for(i=0;i<stickers.length;i++)
+        if(dot(stickers[i].center,u) > cut+1e-9) members.push(i);
+      var to=derivePerm(stickers, members, u, 2*Math.PI/3, tol);
+      twists.push({ axis:u.slice(), step:2*Math.PI/3, order:3,
+                    members:new Int32Array(members), to:to,
+                    vertex:k, tip:deep===0 });
+    });
+  }
+
+  var P=basePuzzle("pyra", stickers, twists, 4, ["F1","F2","F3","F4"]);
+  P.taper=0.55;   /* prisms shrink toward the centre — a tetrahedron's
+                     acute dihedrals would let straight ones poke out */
+  P.radius=Math.sqrt(3)*a*0.72;
+  P.scrambleTwists=twists.map(function(_,idx){ return idx; });
+
+  P.moveName=function(mv){
+    var tw=twists[mv.t];
+    var L2=letters[tw.vertex];
+    return (tw.tip? L2.toLowerCase() : L2) + (mv.n===2?"'":"");
+  };
+  P.namedMove=function(name){
+    var m=/^([ULRBulrb])(')?$/.exec(name);
+    if(!m) throw new Error("bad pyraminx move "+name);
+    var big=/[ULRB]/.test(m[1]);
+    var vk=letters.indexOf(m[1].toUpperCase());
+    var t=vk*2 + (big?1:0);
+    return { t:t, n:m[2]?2:1 };
+  };
+
+  /* pieces for the solver, clustered by cut-zone signature:
+     tips (zone 2 on their axis), axial centres (zone 1), edges (zone 1
+     on two axes). sticker lists ordered clockwise-from-outside. */
+  var byKey={};
+  for(i=0;i<stickers.length;i++){
+    var zones=[];
+    for(k=0;k<4;k++){
+      var u2=norm(verts[k]), R2=dot(verts[k],u2);
+      var d2=dot(stickers[i].center,u2);
+      zones.push(d2>5*R2/9+1e-9 ? 2 : d2>R2/9+1e-9 ? 1 : 0);
+    }
+    var key=zones.join("");
+    (byKey[key]=byKey[key]||{zones:zones, list:[]}).list.push(i);
+  }
+  var tips=[], axials=[], edges=[];
+  Object.keys(byKey).sort().forEach(function(key){
+    var g=byKey[key];
+    var two=g.zones.indexOf(2);
+    var ones=[];
+    for(k=0;k<4;k++) if(g.zones[k]===1) ones.push(k);
+    function orderAbout(u){
+      var e1=null;
+      for(i=0;i<g.list.length&&!e1;i++){
+        var nn=stickers[g.list[i]].normal;
+        var pr=sub(nn, scl(u, dot(nn,u)));
+        if(len(pr)>1e-6) e1=norm(pr);
+      }
+      var e2=cross(u,e1);
+      var l=g.list.map(function(si){
+        var nn=stickers[si].normal;
+        return { si:si, ang:Math.atan2(dot(nn,e2), dot(nn,e1)) };
+      });
+      l.sort(function(x,y){ return y.ang-x.ang; });  /* CW from outside */
+      return l.map(function(x){ return x.si; });
+    }
+    if(two>=0) tips.push({ vertex:two, stickers:orderAbout(norm(verts[two])) });
+    else if(ones.length===1) axials.push({ vertex:ones[0], stickers:orderAbout(norm(verts[ones[0]])) });
+    else if(ones.length===2){
+      var d3=norm(add(norm(verts[ones[0]]), norm(verts[ones[1]])));
+      var l2=g.list.slice().sort();
+      edges.push({ vertices:ones, stickers:l2,
+                   faces:l2.map(function(si){ return stickers[si].face; }) });
+    }
+  });
+  tips.sort(function(x,y){ return x.vertex-y.vertex; });
+  axials.sort(function(x,y){ return x.vertex-y.vertex; });
+  P.pieces={ tips:tips, axials:axials, edges:edges };
+  return P;
+}
+
+/* ================= skewb ================= */
+
+function buildSkewb(){
+  var h=1.3;
+  var stickers=[], f, i;
+  for(f=0; f<6; f++){
+    var nrm=CUBE_FACES[f].n;
+    var up = Math.abs(nrm[1])>0.9 ? [0,0,1] : [0,1,0];
+    var u = norm(cross(up, nrm)), v = cross(nrm, u);
+    var C=[
+      add(scl(nrm,h), add(scl(u,-h), scl(v,-h))),
+      add(scl(nrm,h), add(scl(u, h), scl(v,-h))),
+      add(scl(nrm,h), add(scl(u, h), scl(v, h))),
+      add(scl(nrm,h), add(scl(u,-h), scl(v, h)))
+    ];
+    var M=[mix(C[0],C[1],.5), mix(C[1],C[2],.5), mix(C[2],C[3],.5), mix(C[3],C[0],.5)];
+    function push(poly){
+      stickers.push({ poly:windPoly(chamferPoly(insetPoly(poly,0.90),0.14), nrm),
+                      center:centroid(poly), normal:nrm.slice(), face:f, depth:0.5 });
+    }
+    push(M.slice());                       /* the centre diamond */
+    for(i=0;i<4;i++) push([C[i], M[i], M[(i+3)%4]]);
+  }
+
+  /* four corner axes (a tetrad), cuts through the very centre */
+  var AX=[[-1,1,-1],[1,1,1],[-1,-1,1],[1,-1,-1]].map(norm);
+  var letters=["U","R","L","B"];
+  var tol=minStickerGap(stickers)*0.4;
+  var twists=AX.map(function(u, k){
+    var members=[];
+    for(i=0;i<stickers.length;i++)
+      if(dot(stickers[i].center,u)>1e-9) members.push(i);
+    var to=derivePerm(stickers, members, u, 2*Math.PI/3, tol);
+    return { axis:u.slice(), step:2*Math.PI/3, order:3,
+             members:new Int32Array(members), to:to, corner:k };
+  });
+
+  var P=basePuzzle("skewb", stickers, twists, 6,
+                   CUBE_FACES.map(function(x){return x.letter;}));
+  P.radius=h*Math.sqrt(3);
+  P.scrambleTwists=twists.map(function(_,idx){ return idx; });
+  P.moveName=function(mv){
+    return letters[twists[mv.t].corner]+(mv.n===2?"'":"");
+  };
+  P.namedMove=function(name){
+    var m=/^([URLB])(')?$/.exec(name);
+    if(!m) throw new Error("bad skewb move "+name);
+    return { t:letters.indexOf(m[1]), n:m[2]?2:1 };
+  };
+  return P;
+}
+
 /* ================= shared puzzle skeleton ================= */
 
 function basePuzzle(kind, stickers, twists, faceCount, faceLetters){
@@ -460,6 +636,8 @@ function basePuzzle(kind, stickers, twists, faceCount, faceLetters){
 return {
   build:function(kind){
     if(kind==="mega") return buildMegaminx();
+    if(kind==="pyra") return buildPyraminx();
+    if(kind==="skewb") return buildSkewb();
     var n=parseInt(String(kind).replace(/\D/g,""),10);
     if(!(n>=2&&n<=5)) throw new Error("unknown puzzle "+kind);
     return buildCube(n);

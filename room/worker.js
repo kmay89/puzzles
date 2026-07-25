@@ -2,7 +2,7 @@
    Builds the solvers' tables off the main thread so the cube never
    stutters, then answers "solve" requests with move words. */
 /* global PuzzleEngine, CubeSolver */
-importScripts("puzzle.js?v=3", "solver.js?v=3");
+importScripts("puzzle.js?v=4", "solver.js?v=4");
 
 var built = {};
 
@@ -43,6 +43,25 @@ function ensure(kind, report){
     var sv2 = S.Solver2(ops2, dbl);
     sv2.init(report);
     b = { P:P, sv:sv2, ops:ops2, kind:kind };
+  } else if (kind === "pyra"){
+    var opsP = [];
+    ["U","L","R","B"].forEach(function(L){
+      [1,2].forEach(function(n){
+        var name = L + (n===2 ? "'" : "");
+        var c = P.newColors();
+        P.applyMove(c, P.namedMove(name));
+        opsP.push({ name:name, state:S.analyzePyra(P, c) });
+      });
+    });
+    var tipDelta = [];
+    ["u","l","r","b"].forEach(function(L, vk){
+      var c = P.newColors();
+      P.applyMove(c, P.namedMove(L));
+      tipDelta[vk] = S.analyzePyra(P, c).tips[vk];
+    });
+    var svP = S.SolverPyra(opsP);
+    svP.init(report);
+    b = { P:P, sv:svP, ops:opsP, tipDelta:tipDelta, kind:kind };
   } else {
     throw new Error("no solver for " + kind);
   }
@@ -129,8 +148,25 @@ onmessage = function(e){
     if (d.cmd === "prep"){ postMessage({ type:"ready", kind:d.kind }); return; }
     if (d.cmd === "solve"){
       var colors = Uint8Array.from(d.colors);
-      var st = CubeSolver.analyze(b.P.cubies, colors, b.P.faceOf);
-      var moves = (d.kind === "cube3") ? b.sv.solve(st, 900) : b.sv.solve(st);
+      var moves;
+      if (d.kind === "pyra"){
+        var stp = CubeSolver.analyzePyra(b.P, colors);
+        moves = b.sv.solve(stp);
+        /* big turns carry their tips along — read the tips AFTER the
+           big solution, then spin each straight home */
+        var sim = Uint8Array.from(colors);
+        moves.forEach(function(nm){ b.P.applyMove(sim, b.P.namedMove(nm)); });
+        var tipsNow = CubeSolver.analyzePyra(b.P, sim).tips;
+        ["u","l","r","b"].forEach(function(L, vk){
+          if (tipsNow[vk]){
+            var n = ((3 - tipsNow[vk]) * b.tipDelta[vk]) % 3;
+            if (n) moves.push(L + (n===2 ? "'" : ""));
+          }
+        });
+      } else {
+        var st = CubeSolver.analyze(b.P.cubies, colors, b.P.faceOf);
+        moves = (d.kind === "cube3") ? b.sv.solve(st, 900) : b.sv.solve(st);
+      }
       if (!moves) throw new Error("search timed out");
       postMessage({ type:"solution", kind:d.kind, id:d.id,
                     moves:Array.prototype.slice.call(moves),
@@ -179,6 +215,9 @@ onmessage = function(e){
       if (d.kind === "cube2"){
         postMessage({ type:"stats", kind:d.kind,
                       main:tableStats(b.sv.table(), 5040*729) });
+      } else if (d.kind === "pyra"){
+        postMessage({ type:"stats", kind:d.kind,
+                      main:tableStats(b.sv.table(), 720*64*81) });
       } else {
         var tb=b.sv.tables();
         postMessage({ type:"stats", kind:d.kind,
@@ -189,6 +228,12 @@ onmessage = function(e){
     }
     if (d.cmd === "locate"){
       var lc = Uint8Array.from(d.colors);
+      if (d.kind === "pyra"){
+        var lenp = b.sv.encode(CubeSolver.analyzePyra(b.P, lc));
+        postMessage({ type:"locate", kind:d.kind, id:d.id,
+                      d:lenp.d===255?0:lenp.d, g:false, d2:0 });
+        return;
+      }
       var lst = CubeSolver.analyze(b.P.cubies, lc, b.P.faceOf);
       if (d.kind === "cube2"){
         var len = b.sv.encode(lst);
@@ -206,6 +251,10 @@ onmessage = function(e){
         cloud = buildCloud(b.sv.table(), 5040*729, d.stride || 1, 0.55, 0.6);
         postMessage({ type:"map", kind:d.kind, total:3674160, cloud:cloud },
                     [cloud.pos.buffer, cloud.dep.buffer]);
+      } else if (d.kind === "pyra"){
+        cloud = buildCloud(b.sv.table(), 720*64*81, d.stride || 1, 0.55, 0.6);
+        postMessage({ type:"map", kind:d.kind, total:933120, cloud:cloud },
+                    [cloud.pos.buffer, cloud.dep.buffer]);
       } else {
         var tabs = b.sv.tables();
         cloud = buildCloud(tabs.prunTS, 2187*495, d.stride || 1, 0.55, 0.6);
@@ -218,6 +267,24 @@ onmessage = function(e){
     }
     if (d.cmd === "walk"){
       var wc = Uint8Array.from(d.colors);
+      if (d.kind === "pyra"){
+        /* simulate on the stickers; tips don't move you on this map */
+        var stepsP = [], cw = Uint8Array.from(d.colors);
+        function recP(){
+          var en = b.sv.encode(CubeSolver.analyzePyra(b.P, cw));
+          var dd = en.d===255 ? 0 : en.d;
+          var pp = [0,0,0];
+          mapPos(en.id, dd, pp, 0, 0.55, 0.6);
+          stepsP.push({ x:pp[0], y:pp[1], z:pp[2], d:dd, g:false, d2:0 });
+        }
+        recP();
+        for (var wi=0; wi<d.names.length; wi++){
+          b.P.applyMove(cw, b.P.namedMove(d.names[wi]));
+          recP();
+        }
+        postMessage({ type:"walk", kind:d.kind, id:d.id, steps:stepsP });
+        return;
+      }
       var wst = CubeSolver.analyze(b.P.cubies, wc, b.P.faceOf);
       var byName = opsByName(b);
       var steps = [], names = d.names, si;
