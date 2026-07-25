@@ -447,12 +447,41 @@ var walkReqId=0, walkSteps=null, threadRadii=null;
 var MAP_CAPTIONS={
   cube2:"every dot is a real position of the pocket cube · shells = exact turns from home (the God table)",
   cube3:"nebula: all 1,082,565 orientation×slice coordinates, shells = proven turns to G1 · nucleus: the corner-permutation space inside G1",
-  other:"Ariadne's thread — the walk itself · shells = length of the simplified move word"
+  other:"the fog is an impression of the word tree — the glowing thread through it is real"
 };
 
 function mapStride(){
   var small=Math.min(innerWidth,innerHeight)<700;
-  return kind==="cube2" ? (small?8:2) : (small?4:1);
+  return kind==="cube2" ? (small?4:2) : (small?2:1);
+}
+
+/* the big puzzles can't chart their true space (10⁴⁵⁺ states), so the
+   map sketches the one thing that IS countable: the tree of move-words,
+   thickening outward as every turn multiplies the paths. An impression,
+   labeled as one — the walk's thread through it is exact. */
+function impressionCloud(){
+  var shells=KINDS[kind].scramble;
+  var small=Math.min(innerWidth,innerHeight)<700;
+  var budget=small?200000:520000;
+  var weights=[], total=0, d, i;
+  for(d=1; d<=shells; d++){ var x=Math.pow(1.30,d); weights.push(x); total+=x; }
+  var pos=new Float32Array(budget*3), dep=new Float32Array(budget), k=0;
+  var seed=48271;
+  function h(){ seed=(Math.imul(seed,48271)%2147483647+2147483647)%2147483647; return seed/2147483647; }
+  for(d=1; d<=shells && k<budget; d++){
+    var cnt=Math.max(50, Math.round(budget*weights[d-1]/total));
+    for(i=0; i<cnt && k<budget; i++, k++){
+      var u=h(), v=h(), jj=h();
+      var th=6.2831853*u, cph=2*v-1, sph=Math.sqrt(Math.max(0,1-cph*cph));
+      var r=d+(jj-0.5)*0.85;
+      pos[k*3]=Math.cos(th)*sph*r;
+      pos[k*3+1]=cph*r*0.55;
+      pos[k*3+2]=Math.sin(th)*sph*r;
+      dep[k]=d;
+    }
+  }
+  return { pos:pos.subarray(0,k*3).slice(), dep:dep.subarray(0,k).slice(),
+           n:k, maxd:shells };
 }
 
 function ensureMap(){
@@ -471,10 +500,13 @@ function requestCloud(){
       getWorker().postMessage({cmd:"map", kind:kind, stride:mapStride()});
     else mapCap.textContent=MAP_CAPTIONS[kind];
   } else {
-    mapView.clearClouds();
+    var imp=impressionCloud();
+    mapView.setClouds([{pos:imp.pos, dep:imp.dep, n:imp.n, maxd:imp.maxd,
+                        alpha:0.26, ptScale:34}]);
     mapView.setMaxR(KINDS[kind].scramble*1.02);
     mapCloudKind=null;
-    mapCap.textContent=MAP_CAPTIONS.other;
+    var branch=P.scrambleTwists.length*(P.twists[0].order-1);
+    mapCap.textContent=MAP_CAPTIONS.other+" · every turn multiplies the paths ×"+branch;
   }
 }
 
@@ -1308,10 +1340,29 @@ document.getElementById("arPromptNo").addEventListener("click", function(){
 /* ---------- maths panel ---------- */
 var mathsBtn=document.getElementById("btnMaths");
 var mathsPanel=document.getElementById("maths");
-mathsBtn.addEventListener("click", function(){
-  var open=!mathsPanel.classList.contains("show");
+function setMaths(open){
   mathsPanel.classList.toggle("show", open);
   mathsBtn.textContent=open?"back to the puzzle ×":"the mathematics ✦";
+}
+mathsBtn.addEventListener("click", function(){
+  setMaths(!mathsPanel.classList.contains("show"));
+});
+document.getElementById("mathsClose").addEventListener("click", function(){
+  setMaths(false);
+});
+
+/* Escape closes whichever overlay is open — no one gets trapped */
+window.addEventListener("keydown", function(e){
+  if(e.key!=="Escape") return;
+  if(mathsPanel.classList.contains("show")){ setMaths(false); return; }
+  if(!scorePanel.hidden){ closeScore(); return; }
+  var scanP=document.getElementById("scan");
+  if(scanP&&!scanP.hidden){
+    var c=document.getElementById("scanClose");
+    if(c) c.click();
+    return;
+  }
+  if(!arPrompt.hidden){ arPrompt.hidden=true; }
 });
 
 /* ---------- put it in your room ---------- */

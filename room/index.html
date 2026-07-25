@@ -17,6 +17,8 @@
 <meta property="og:image:alt" content="A glowing megaminx beside a galaxy of puzzle states — the solving room.">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="https://kmay89.github.io/puzzles/room/og.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <title>The solving room — Karl Meves</title>
 <style>
   /* ================= design tokens =================
@@ -338,6 +340,13 @@
   .essay{
     max-width:42rem; margin:0 auto; padding:5.5rem 1.4rem 6rem;
   }
+  .m-close{
+    position:fixed; top:1rem; right:1rem; z-index:7;
+    font:italic .85rem Georgia,serif; cursor:pointer; border-radius:999px;
+    padding:.45rem 1.1rem; border:1px solid rgba(255,201,122,.55);
+    background:rgba(14,10,7,.85); color:var(--lamp);
+  }
+  .m-close:hover{background:rgba(255,201,122,.14)}
   .essay h2{
     font-size:1.05rem; font-weight:normal; font-style:italic; color:var(--lamp);
     margin:2.2rem 0 .5rem;
@@ -476,6 +485,7 @@
 </section>
 
 <section id="maths" aria-label="The mathematics of the solving room">
+  <button class="m-close" id="mathsClose">back to the puzzle ×</button>
   <div class="essay">
     <p class="kicker">the mathematics</p>
 
@@ -643,9 +653,9 @@
 off. The introduction is still there, though — <a href="../">go back</a>.</p>
 
 <script src="puzzle.js?v=3"></script>
-<script src="map.js?v=2"></script>
+<script src="map.js?v=3"></script>
 <script src="ar.js?v=1"></script>
-<script src="app.js?v=6"></script>
+<script src="app.js?v=7"></script>
 <script src="scan.js?v=2"></script>
 </body>
 </html>

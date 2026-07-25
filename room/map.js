@@ -29,15 +29,18 @@ function MapView(canvas){
   /* stars: one vertex per state */
   var starProg=prog([
     "attribute vec3 aPos; attribute float aDep;",
-    "uniform mat4 uPV; uniform float uMaxD, uPtScale;",
-    "varying float vD;",
+    "uniform mat4 uPV; uniform float uMaxD, uPtScale, uTime;",
+    "varying float vD, vTw;",
     "void main(){",
     "  gl_Position=uPV*vec4(aPos,1.0);",
-    "  float sz=uPtScale*(1.6-0.8*aDep/max(uMaxD,1.0));",
+    /* every star keeps its own slow heartbeat */
+    "  float ph=fract(sin(dot(aPos, vec3(12.9898,78.233,45.164)))*43758.5453);",
+    "  vTw=0.72+0.42*sin(uTime*1.7+ph*6.2831853);",
+    "  float sz=uPtScale*(1.6-0.8*aDep/max(uMaxD,1.0))*(0.82+0.3*vTw);",
     "  gl_PointSize=max(1.0, sz/max(gl_Position.w,0.2));",
     "  vD=aDep/max(uMaxD,1.0);",
     "}"].join("\n"),[
-    "precision mediump float; varying float vD; uniform float uAlpha;",
+    "precision mediump float; varying float vD, vTw; uniform float uAlpha;",
     "void main(){",
     "  vec2 q=gl_PointCoord-0.5; float r2=dot(q,q); if(r2>0.25) discard;",
     /* home-green through parchment to lamp to ember */
@@ -47,13 +50,14 @@ function MapView(canvas){
     "         : vD<0.7  ? mix(cMid,cFar,(vD-0.35)/0.35)",
     "         : mix(cFar,cEnd,(vD-0.7)/0.3);",
     "  float fade=1.0-r2*4.0;",
-    "  gl_FragColor=vec4(c,1.0)*uAlpha*fade;",
+    "  gl_FragColor=vec4(c,1.0)*uAlpha*fade*vTw;",
     "}"].join("\n"));
   var sLoc={ aPos:gl.getAttribLocation(starProg,"aPos"),
              aDep:gl.getAttribLocation(starProg,"aDep"),
              uPV:gl.getUniformLocation(starProg,"uPV"),
              uMaxD:gl.getUniformLocation(starProg,"uMaxD"),
              uPtScale:gl.getUniformLocation(starProg,"uPtScale"),
+             uTime:gl.getUniformLocation(starProg,"uTime"),
              uAlpha:gl.getUniformLocation(starProg,"uAlpha") };
 
   /* thread + comet */
@@ -103,7 +107,7 @@ function MapView(canvas){
   var clouds=[];         /* [{posBuf, depBuf, n, maxd, alpha, ptScale}] */
   var walk=null;         /* {posBuf, tBuf, n, pts:[[x,y,z]...], mode} */
   var prevWalk=null;
-  var maxR=11, spin=0, tilt=0.35, userYaw=0, vYaw=0;
+  var maxR=11, spin=0, tilt=0.5, userYaw=0, vYaw=0, clock=0;
   var head=0;            /* fractional index into walk pts */
   var dragging=false, lastX=0, lastT=0;
 
@@ -176,15 +180,17 @@ function MapView(canvas){
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
       if(!dragging){
-        spin+=dt*0.05;
+        spin+=dt*0.07;
         userYaw+=vYaw*dt; vYaw*=Math.pow(0.1,dt);
       }
+      clock+=dt;
       var dist=maxR*2.75;
       var pv=m4mul(persp(0.72,w/h,0.1,dist*4),
                m4mul(trans(-dist), m4mul(rotX(tilt), rotY(spin+userYaw))));
 
       gl.useProgram(starProg);
       gl.uniformMatrix4fv(sLoc.uPV,false,pv);
+      gl.uniform1f(sLoc.uTime,clock);
       clouds.forEach(function(c){
         gl.uniform1f(sLoc.uMaxD,c.maxd);
         gl.uniform1f(sLoc.uPtScale,c.ptScale*dpr);
