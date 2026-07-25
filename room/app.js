@@ -164,6 +164,7 @@ var bufPos=gl.createBuffer(), bufNrm=gl.createBuffer(),
 var P=null, kind=null, colors=null, history=[];
 var geo=null;         /* {stickerTopRange, stickerIdxRange, indexArr, vertexColors} */
 var pal=null;
+var memberTwists=null; /* sticker index → twists that carry it */
 
 function buildGeometry(){
   var pos=[], nrm=[], col=[], top=[], idx=[];
@@ -216,6 +217,12 @@ function buildGeometry(){
   geo={ topRanges:topRanges, idxRanges:idxRanges,
         indexArr:new Uint16Array(idx), colorArr:new Float32Array(col),
         vertexCount:pos.length/3 };
+
+  /* which twists carry each sticker — the hand needs to know */
+  memberTwists=P.stickers.map(function(){ return []; });
+  P.twists.forEach(function(tw, ti){
+    for(var q=0;q<tw.members.length;q++) memberTwists[tw.members[q]].push(ti);
+  });
 
   gl.bindBuffer(gl.ARRAY_BUFFER, bufPos);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(pos), gl.STATIC_DRAW);
@@ -345,6 +352,170 @@ function drawArrow(model, now){
   gl.enable(gl.CULL_FACE);
 }
 
+/* ---------- the hand: grab a sticker, turn its layer ----------
+   Nothing about dragging is hard-coded. A grab finds the sticker under
+   the pointer; its candidate twists are exactly the twists that carry
+   it; each candidate's motion direction at that point is the physics
+   (velocity = axis × position) projected to the screen; your drag
+   picks the best match, the layer follows with rubber, and release
+   snaps to the nearest legal turn or springs home. */
+var grip=null;   /* {sticker, sx, sy, chosen, t, dir, angle, order} */
+
+function camRay(px, py){
+  var w=canvas.clientWidth, h=canvas.clientHeight;
+  var aspect=w/h, f=1/Math.tan(0.62/2);
+  var ex=(2*px/w-1)*aspect/f, ey=(1-2*py/h)/f;
+  /* eye-space direction → world via R⁻¹ = RotY(-yaw)·RotX(-pitch) */
+  var d=[ex, ey, -1];
+  var cp=Math.cos(cam.pitch), sp=Math.sin(cam.pitch);
+  var d1=[d[0], d[1]*cp+d[2]*sp, -d[1]*sp+d[2]*cp];
+  var cy=Math.cos(cam.yaw), sy=Math.sin(cam.yaw);
+  var dir=normv([d1[0]*cy-d1[2]*sy, d1[1], d1[0]*sy+d1[2]*cy]);
+  var eye=[-cam.dist*sy*cp, cam.dist*sp, cam.dist*cy*cp];
+  return { o:eye, d:dir };
+}
+
+function hitSticker(ray){
+  var best=-1, bestT=Infinity, i, j;
+  for(i=0;i<P.stickers.length;i++){
+    var st=P.stickers[i], n=st.normal, poly=st.poly;
+    var denom=n[0]*ray.d[0]+n[1]*ray.d[1]+n[2]*ray.d[2];
+    if(denom>-1e-6) continue;                 /* back-facing or edge-on */
+    var pc=n[0]*st.center[0]+n[1]*st.center[1]+n[2]*st.center[2];
+    var po=n[0]*ray.o[0]+n[1]*ray.o[1]+n[2]*ray.o[2];
+    var t=(pc-po)/denom;
+    if(t<0.01||t>=bestT) continue;
+    var p=[ray.o[0]+ray.d[0]*t, ray.o[1]+ray.d[1]*t, ray.o[2]+ray.d[2]*t];
+    var inside=true;
+    for(j=0;j<poly.length&&inside;j++){
+      var a=poly[j], b=poly[(j+1)%poly.length];
+      var e=[b[0]-a[0],b[1]-a[1],b[2]-a[2]];
+      var r=[p[0]-a[0],p[1]-a[1],p[2]-a[2]];
+      var cx=crossv(e,r);
+      if(cx[0]*n[0]+cx[1]*n[1]+cx[2]*n[2] < -1e-6) inside=false;
+    }
+    if(inside){ best=i; bestT=t; }
+  }
+  if(best>=0) return best;
+  /* forgiving pass: fingers land in the gaps between stickers too */
+  var bestD=Infinity;
+  for(i=0;i<P.stickers.length;i++){
+    var st2=P.stickers[i], n2=st2.normal;
+    var den2=n2[0]*ray.d[0]+n2[1]*ray.d[1]+n2[2]*ray.d[2];
+    if(den2>-1e-6) continue;
+    if(st2.reach===undefined){
+      var mx=0;
+      for(j=0;j<st2.poly.length;j++){
+        var dvx=st2.poly[j][0]-st2.center[0], dvy=st2.poly[j][1]-st2.center[1],
+            dvz=st2.poly[j][2]-st2.center[2];
+        var dl=Math.sqrt(dvx*dvx+dvy*dvy+dvz*dvz);
+        if(dl>mx) mx=dl;
+      }
+      st2.reach=mx*1.35;
+    }
+    var pc2=n2[0]*st2.center[0]+n2[1]*st2.center[1]+n2[2]*st2.center[2];
+    var po2=n2[0]*ray.o[0]+n2[1]*ray.o[1]+n2[2]*ray.o[2];
+    var t2=(pc2-po2)/den2;
+    if(t2<0.01) continue;
+    var p2=[ray.o[0]+ray.d[0]*t2, ray.o[1]+ray.d[1]*t2, ray.o[2]+ray.d[2]*t2];
+    var ddx=p2[0]-st2.center[0], ddy=p2[1]-st2.center[1], ddz=p2[2]-st2.center[2];
+    var dist=Math.sqrt(ddx*ddx+ddy*ddy+ddz*ddz);
+    if(dist<st2.reach && t2-dist*0.5<bestD){ bestD=t2-dist*0.5; best=i; }
+  }
+  return best;
+}
+
+/* screen-space direction of a twist's motion at a world point */
+function twistScreenDir(ti, p){
+  var u=P.twists[ti].axis;
+  var v=crossv(u, p);                        /* velocity for +angle */
+  var cp=Math.cos(cam.pitch), sp=Math.sin(cam.pitch);
+  var cy=Math.cos(cam.yaw), sy=Math.sin(cam.yaw);
+  /* world → eye: Rx(pitch)·Ry(yaw) */
+  var v1=[v[0]*cy+v[2]*sy, v[1], -v[0]*sy+v[2]*cy];
+  var v2=[v1[0], v1[1]*cp-v1[2]*sp, v1[1]*sp+v1[2]*cp];
+  return [v2[0], -v2[1]];                    /* canvas y grows downward */
+}
+
+function gripAllowed(){
+  if(anim||pendingSolve) return false;
+  if(AR&&AR.mode()) return false;
+  if(playing&&!teach) return false;          /* let performances finish */
+  return true;
+}
+
+function gripStart(px, py){
+  var hit=hitSticker(camRay(px, py));
+  if(hit<0) return false;
+  grip={ sticker:hit, sx:px, sy:py, chosen:false, angle:0 };
+  overtureStage=2;
+  return true;
+}
+
+function gripMove(px, py){
+  if(!grip) return;
+  var dx=px-grip.sx, dy=py-grip.sy;
+  if(!grip.chosen){
+    if(dx*dx+dy*dy<100) return;              /* 10px of intent first */
+    var p=P.stickers[grip.sticker].center;
+    var cands=memberTwists[grip.sticker], best=-1, bestScore=0, bestDir=null;
+    for(var i=0;i<cands.length;i++){
+      var d2=twistScreenDir(cands[i], p);
+      var score=Math.abs(dx*d2[0]+dy*d2[1]);
+      if(score>bestScore){ bestScore=score; best=cands[i]; bestDir=d2; }
+    }
+    if(best<0) { grip=null; return; }
+    var l=Math.hypot(bestDir[0],bestDir[1])||1;
+    grip.chosen=true; grip.t=best;
+    grip.dir=[bestDir[0]/l, bestDir[1]/l];
+    grip.order=P.twists[best].order;
+    splitIndex(P.twists[best].members);
+  }
+  var tw=P.twists[grip.t];
+  var along=dx*grip.dir[0]+dy*grip.dir[1];
+  var raw=along*tw.step/130;
+  var lim=2.2*tw.step;
+  grip.angle=Math.max(-lim, Math.min(lim, raw));
+}
+
+function gripEnd(){
+  if(!grip) return;
+  if(!grip.chosen){ grip=null; return; }
+  var tw=P.twists[grip.t];
+  var steps=Math.round(grip.angle/tw.step);
+  if(steps>2) steps=2; if(steps<-2) steps=-2;
+  var n=((steps%tw.order)+tw.order)%tw.order;
+  var mv={t:grip.t, n:n};
+  var dur=140+260*Math.abs(steps*tw.step-grip.angle)/tw.step;
+  if(steps===0){
+    anim={ mv:mv, twist:tw, t0:performance.now(), dur:dur, easeFn:easeSnap,
+           from:grip.angle, target:0, noCommit:true };
+    grip=null;
+    return;
+  }
+  /* teach practice: the right hand-made turn advances the lesson */
+  if(teach&&playing&&queue.length){
+    var want=queue[0].mv;
+    if(want.t===mv.t&&want.n===mv.n){
+      queue.shift();
+      playing.at++;
+      renderTicker();
+      anim={ mv:mv, twist:tw, t0:performance.now(), dur:dur, easeFn:easeSnap,
+             from:grip.angle, target:steps*tw.step };
+      grip=null;
+      setStatus("yes — "+P.moveName(mv)+", by your own hand");
+      return;
+    }
+    anim={ mv:mv, twist:tw, t0:performance.now(), dur:dur, easeFn:easeSnap,
+           from:grip.angle, target:steps*tw.step, manual:true, wrong:true };
+    grip=null;
+    return;
+  }
+  anim={ mv:mv, twist:tw, t0:performance.now(), dur:dur, easeFn:easeSnap,
+         from:grip.angle, target:steps*tw.step, manual:true };
+  grip=null;
+}
+
 /* ---------- camera: a mass on a spring ---------- */
 var cam={
   yaw:-0.62, pitch:0.44, dist:7.4,
@@ -384,11 +555,14 @@ canvas.addEventListener("pointerdown", function(e){
   if(AR&&AR.mode()==="window"){ AR.tap(); return; }
   if(AR&&AR.mode()) return;
   canvas.setPointerCapture(e.pointerId);
+  cam.idleAt=performance.now();
+  /* a touch on the puzzle grips a layer; a touch on the dark orbits */
+  if(gripAllowed() && gripStart(e.clientX, e.clientY)) return;
   cam.dragging=true; cam.lastX=e.clientX; cam.lastY=e.clientY;
   cam.lastT=performance.now(); cam.vyaw=0; cam.vpitch=0;
-  cam.idleAt=performance.now();
 });
 canvas.addEventListener("pointermove", function(e){
+  if(grip){ gripMove(e.clientX, e.clientY); return; }
   if(!cam.dragging) return;
   var now=performance.now(), dt=Math.max(1,now-cam.lastT)/1000;
   var dx=(e.clientX-cam.lastX)/canvas.clientHeight*3.2;
@@ -402,6 +576,7 @@ canvas.addEventListener("pointermove", function(e){
   cam.idleAt=now;
 });
 function endDrag(){
+  if(grip){ gripEnd(); return; }
   cam.dragging=false; cam.idleAt=performance.now();
   if(REDUCED){ cam.vyaw=0; cam.vpitch=0; }
 }
@@ -710,14 +885,42 @@ function animTick(now){
   if(!anim) return;
   var t=(now-anim.t0)/anim.dur;
   if(t>=1){
+    if(anim.noCommit){
+      /* a grip that changed its mind — nothing happened */
+      anim=null;
+      setIndexAll();
+      return;
+    }
     P.applyMove(colors, anim.mv);
     history.push(anim.mv);
     var wasSilent=anim.silent;
-    if(teach && !wasSilent) lastTaught=anim.mv;
+    var wasManual=anim.manual, wasWrong=anim.wrong, doneMv=anim.mv;
+    if(teach && !wasSilent && !wasManual) lastTaught=anim.mv;
     anim=null;
     refreshColors();
     setIndexAll();
     updateReadout();
+    if(wasManual){
+      /* a hand-made turn: name it, keep the maps honest */
+      walkSteps=null; threadRadii=null;
+      if(mapView) mapView.setWalk(null);
+      requestLocate();
+      var nm=P.moveName(doneMv);
+      if(wasWrong && teach && playing && queue.length){
+        setStatus("you turned "+nm+" — the badge asks for "+
+          playing.names[playing.at+1]+" · undoing so you can try again");
+        var inv=P.invert(doneMv), tw2=P.twists[inv.t];
+        var turns2=inv.n>tw2.order/2 ? inv.n-tw2.order : inv.n;
+        splitIndex(tw2.members);
+        anim={ mv:inv, twist:tw2, t0:performance.now(), dur:420,
+               easeFn:easeSnap, target:turns2*tw2.step, silent:"undo" };
+      } else {
+        setStatus("that was "+nm+" — "+moveDesc(nm)+
+          (P.isSolved(colors)?" · and it's home!":""));
+      }
+      return;
+    }
+    if(wasSilent==="undo"){ return; }
     if(wasSilent){
       /* a back-step: the program didn't advance — it retreated */
       if(playing){
@@ -1124,8 +1327,8 @@ function setKind(k){
   elFact.textContent=KINDS[k].fact;
   if(mapOpen){ requestCloud(); mapLive.textContent=""; }
   setStatus(k==="mega"
-    ? "the shape from the photographs — drag it, fling it, scramble it"
-    : "drag to turn it · fling it and it keeps going");
+    ? "the shape from the photographs — grab a face to turn it, drag the dark to look around"
+    : "grab a face to turn it by hand · drag the dark to look around");
   setBusy(false);
   elTicker.classList.remove("show");
   /* warm the solver while nobody's looking */
@@ -1171,12 +1374,21 @@ function renderScene(proj, view, world, now){
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxStatic);
   gl.drawElements(gl.TRIANGLES, staticCount, gl.UNSIGNED_SHORT, 0);
 
-  if(anim && movingCount>0){
+  var rotA=null, rotAx=null, held=false;
+  if(anim){
     var t=(now-anim.t0)/anim.dur;
-    var a=anim.target*anim.easeFn(t);
-    gl.uniformMatrix4fv(loc.uModel,false,mMul(world, mAxisAngle(anim.twist.axis,a)));
+    var from=anim.from||0;
+    rotA=from+(anim.target-from)*anim.easeFn(t);
+    rotAx=anim.twist.axis;
+  } else if(grip&&grip.chosen){
+    rotA=grip.angle; rotAx=P.twists[grip.t].axis; held=true;
+  }
+  if(rotA!==null && movingCount>0){
+    if(held) gl.uniform1f(loc.uGlow, Math.min(1,glow)+0.4); /* the held layer glows */
+    gl.uniformMatrix4fv(loc.uModel,false,mMul(world, mAxisAngle(rotAx,rotA)));
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxMoving);
     gl.drawElements(gl.TRIANGLES, movingCount, gl.UNSIGNED_SHORT, 0);
+    if(held) gl.uniform1f(loc.uGlow, Math.min(1,glow));
   }
 
   /* the teacher's arrow: shown while a taught turn waits, and riding
@@ -1186,7 +1398,8 @@ function renderScene(proj, view, world, now){
     if(mvA){
       if(mvA!==arrowFor) buildArrow(mvA);
       var am = (anim && anim.mv===mvA)
-        ? mAxisAngle(anim.twist.axis, anim.target*anim.easeFn((now-anim.t0)/anim.dur))
+        ? mAxisAngle(anim.twist.axis,
+            (anim.from||0)+(anim.target-(anim.from||0))*anim.easeFn((now-anim.t0)/anim.dur))
         : mIdentity();
       drawArrow(mMul(world, am), now);
     } else arrowFor=null;
