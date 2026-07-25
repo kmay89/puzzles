@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>The Chess Room — chess, taught kindly</title>
+<meta name="description" content="A free chess room in your browser: a full 3D board (with a lovely 2D option), two-player nearby play with no accounts, a patient coach, opening stories, and a real tournament clock. No ads, nothing tracked, works offline.">
+<meta name="theme-color" content="#191512">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta property="og:title" content="The Chess Room">
+<meta property="og:description" content="Chess, taught kindly. 3D or 2D, a patient coach, nearby two-player with no accounts, and a real clock. Free, offline, nothing tracked.">
+<style>
+  :root{
+    --room:#191512;
+    --card:#241e19;
+    --card2:#2d2620;
+    --ink:#f0e8da;
+    --soft:#b3a48f;
+    --line:#463a2f;
+    --amber:#f0a020;
+    --glow:#ffd166;
+    --good:#3ecf8e;
+    --bad:#ff7b6e;
+    --blue:#8fb0ff;
+    --shadow:0 6px 24px rgba(0,0,0,.45);
+    --safe-top:env(safe-area-inset-top, 0px);
+    --safe-bot:env(safe-area-inset-bottom, 0px);
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--room); color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:16px; line-height:1.5; overflow:hidden;
+    touch-action:manipulation; user-select:none; -webkit-user-select:none;
+  }
+  button{font:inherit; color:inherit; background:none; border:none; cursor:pointer}
+  .hide{display:none !important}
+
+  /* ---------- layout ---------- */
+  #app{display:flex; flex-direction:column; height:100%; padding-top:var(--safe-top)}
+  #stage{position:relative; flex:1; min-height:0}
+  canvas.board{position:absolute; inset:0; width:100%; height:100%; display:block}
+  #wrap{display:flex; flex-direction:row; flex:1; min-height:0}
+  #panel{
+    width:270px; flex:none; display:flex; flex-direction:column; gap:8px;
+    padding:10px; border-left:1px solid var(--line); background:var(--card);
+    overflow:hidden;
+  }
+  @media (max-width:760px){
+    #wrap{flex-direction:column}
+    #panel{width:auto; height:132px; border-left:none; border-top:1px solid var(--line); flex-direction:row; align-items:stretch}
+  }
+
+  /* ---------- player bars ---------- */
+  .pbar{
+    position:absolute; left:10px; right:10px; display:flex; align-items:center; gap:10px;
+    pointer-events:none; z-index:3;
+  }
+  .pbar.top{top:8px} .pbar.bot{bottom:8px}
+  .ptag{
+    background:rgba(20,16,12,.72); backdrop-filter:blur(6px); border:1px solid var(--line);
+    border-radius:12px; padding:5px 12px; font-weight:650; max-width:46vw;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .ptag .cap{font-weight:400; color:var(--soft); font-size:.82em; margin-left:6px; letter-spacing:.06em}
+  .clock{
+    margin-left:auto; pointer-events:auto;
+    font-variant-numeric:tabular-nums; font-weight:700; letter-spacing:.03em;
+    background:rgba(20,16,12,.72); border:1px solid var(--line); border-radius:12px;
+    padding:5px 12px; font-size:1.28em; transition:box-shadow .2s, color .2s, background .2s;
+  }
+  .clock.off{display:none}
+  .clock.run{color:var(--glow); box-shadow:0 0 0 2px rgba(240,160,32,.45), var(--shadow)}
+  .clock.low{color:var(--bad)} .clock.low.run{box-shadow:0 0 0 2px rgba(255,123,110,.55)}
+  .clock.flag{color:var(--bad); text-decoration:line-through}
+  /* the classic skin: a wooden tournament clock face */
+  body.clock-classic .clock{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    background:linear-gradient(#3a2c1f,#241a12); border:2px solid #6b4c33;
+    border-radius:8px; box-shadow:inset 0 2px 6px rgba(0,0,0,.6), var(--shadow);
+    color:#ffdf9e; padding:6px 14px;
+  }
+  body.clock-classic .clock.run{color:#ffe9b8}
+
+  #turnStrip{
+    position:absolute; top:8px; left:50%; transform:translateX(-50%);
+    background:rgba(20,16,12,.72); border:1px solid var(--line); border-radius:999px;
+    padding:4px 14px; font-size:.85em; color:var(--soft); z-index:3; white-space:nowrap;
+  }
+  #turnStrip b{color:var(--ink)}
+
+  /* ---------- toast (the one message funnel) ---------- */
+  #toast{
+    position:absolute; left:50%; bottom:64px; transform:translateX(-50%) translateY(8px);
+    max-width:min(480px, 92vw); background:rgba(24,19,14,.94); border:1px solid var(--line);
+    border-radius:14px; padding:10px 14px; z-index:6; box-shadow:var(--shadow);
+    opacity:0; transition:opacity .25s, transform .25s; pointer-events:none; text-align:center;
+    font-size:.95em;
+  }
+  #toast.show{opacity:1; transform:translateX(-50%) translateY(0); pointer-events:auto}
+  #toast .tact{display:inline-block; margin:6px 6px 0; padding:4px 12px; border-radius:999px;
+    background:var(--amber); color:#241a08; font-weight:700; font-size:.9em}
+  #toast .tact.ghost{background:transparent; border:1px solid var(--line); color:var(--soft)}
+
+  /* ---------- side panel ---------- */
+  #openingCard{
+    background:var(--card2); border:1px solid var(--line); border-radius:12px; padding:8px 12px;
+    font-size:.85em; color:var(--soft); flex:none; max-height:88px; overflow:auto;
+  }
+  #openingCard b{color:var(--glow); display:block; font-size:1.05em}
+  #moveListWrap{flex:1; min-height:0; overflow-y:auto; background:var(--card2);
+    border:1px solid var(--line); border-radius:12px; padding:6px 8px}
+  #moveList{display:grid; grid-template-columns:2.2em 1fr 1fr; gap:1px 6px; font-size:.92em;
+    font-variant-numeric:tabular-nums}
+  #moveList .n{color:var(--soft)}
+  #moveList .m{border-radius:6px; padding:0 6px; cursor:pointer}
+  #moveList .m:hover{background:rgba(255,209,102,.12)}
+  #moveList .m.cur{background:rgba(240,160,32,.25); font-weight:700}
+  #viewBanner{flex:none; background:rgba(143,176,255,.12); border:1px solid rgba(143,176,255,.4);
+    border-radius:10px; padding:5px 10px; font-size:.82em; color:var(--blue); text-align:center; cursor:pointer}
+  @media (max-width:760px){
+    #openingCard{max-width:44vw}
+    #moveListWrap{flex:1}
+  }
+
+  /* ---------- action bar ---------- */
+  #actions{
+    flex:none; display:flex; gap:6px; padding:8px 10px calc(8px + var(--safe-bot));
+    background:var(--card); border-top:1px solid var(--line); justify-content:center; flex-wrap:wrap;
+  }
+  .abtn{
+    display:flex; flex-direction:column; align-items:center; gap:1px;
+    min-width:58px; padding:6px 10px; border-radius:12px; border:1px solid var(--line);
+    background:var(--card2); font-size:.72em; color:var(--soft);
+    transition:transform .08s, background .15s;
+  }
+  .abtn .ic{font-size:1.55em; line-height:1.15; color:var(--ink)}
+  .abtn:active{transform:scale(.94)}
+  .abtn.primary{background:var(--amber); border-color:var(--amber); color:#241a08}
+  .abtn.primary .ic{color:#241a08}
+  .abtn[disabled]{opacity:.35; pointer-events:none}
+
+  /* ---------- overlays ---------- */
+  .ov{
+    position:fixed; inset:0; z-index:20; display:flex; align-items:center; justify-content:center;
+    background:rgba(10,8,6,.72); backdrop-filter:blur(4px); padding:16px;
+  }
+  .card{
+    background:var(--card); border:1px solid var(--line); border-radius:20px; box-shadow:var(--shadow);
+    padding:22px; max-width:520px; width:100%; max-height:calc(100dvh - 40px); overflow-y:auto;
+  }
+  .card h1{font-size:1.7em; margin:.1em 0 .15em; letter-spacing:-.01em}
+  .card h2{font-size:1.25em; margin:.2em 0 .4em}
+  .card p{margin:.5em 0; color:var(--soft)}
+  .card p b{color:var(--ink)}
+  .kicker{color:var(--amber); font-size:.78em; letter-spacing:.14em; text-transform:uppercase; font-weight:700}
+  .bigbtn{
+    display:flex; align-items:center; gap:12px; width:100%; text-align:left;
+    background:var(--card2); border:1px solid var(--line); border-radius:14px;
+    padding:12px 14px; margin:8px 0; transition:transform .08s, border-color .15s;
+  }
+  .bigbtn:active{transform:scale(.98)}
+  .bigbtn:hover{border-color:var(--amber)}
+  .bigbtn .em{font-size:1.7em; flex:none}
+  .bigbtn small{display:block; color:var(--soft); font-weight:400}
+  .bigbtn b{font-size:1.05em}
+  .rowbtns{display:flex; gap:8px; flex-wrap:wrap; margin:8px 0}
+  .chip{
+    padding:7px 14px; border-radius:999px; border:1px solid var(--line); background:var(--card2);
+    font-size:.92em; color:var(--soft);
+  }
+  .chip.sel{background:var(--amber); border-color:var(--amber); color:#241a08; font-weight:700}
+  .ghostbtn{color:var(--soft); text-decoration:underline; margin-top:10px; font-size:.9em}
+  textarea.code{
+    width:100%; min-height:74px; background:#171310; color:var(--ink); border:1px solid var(--line);
+    border-radius:10px; padding:8px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.78em;
+    resize:vertical; user-select:text; -webkit-user-select:text;
+  }
+  input.namebox{
+    width:100%; background:#171310; color:var(--ink); border:1px solid var(--line); border-radius:10px;
+    padding:8px 10px; font:inherit; user-select:text; -webkit-user-select:text;
+  }
+  #qrBox{display:flex; justify-content:center; margin:10px 0}
+  #qrBox canvas{border-radius:10px; max-width:min(300px,72vw); height:auto; image-rendering:pixelated}
+  .settingRow{display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:9px 0; border-bottom:1px solid var(--line)}
+  .settingRow:last-child{border-bottom:none}
+  .settingRow .lbl b{display:block} .settingRow .lbl small{color:var(--soft)}
+
+  /* promotion picker */
+  #promoRow{display:flex; gap:10px; justify-content:center}
+  #promoRow button{
+    width:76px; height:76px; border-radius:16px; background:var(--card2); border:1px solid var(--line);
+    font-size:2.6em; transition:transform .08s;
+  }
+  #promoRow button:first-child{border-color:var(--amber); box-shadow:0 0 0 2px rgba(240,160,32,.35)}
+  #promoRow button:active{transform:scale(.92)}
+
+  /* openings browser */
+  .oline{padding:9px 4px; border-bottom:1px solid var(--line); cursor:pointer; border-radius:8px}
+  .oline:hover{background:rgba(255,209,102,.07)}
+  .oline b{display:block}
+  .oline small{color:var(--soft)}
+  .oline .seq{font-family:ui-monospace,Menlo,Consolas,monospace; color:var(--amber); font-size:.78em}
+
+  /* update banner (from the service worker) */
+  #updateBar{
+    position:fixed; top:calc(8px + var(--safe-top)); left:50%; transform:translateX(-50%);
+    background:var(--amber); color:#241a08; font-weight:700; border-radius:999px;
+    padding:8px 18px; z-index:40; box-shadow:var(--shadow); cursor:pointer; font-size:.9em;
+  }
+
+  #splash{position:fixed; inset:0; z-index:50; background:var(--room); display:flex;
+    align-items:center; justify-content:center; flex-direction:column; gap:8px;
+    transition:opacity .5s; }
+  #splash.gone{opacity:0; pointer-events:none}
+  #splash .k{font-size:4em}
+  #splash .t{font-size:1.3em; font-weight:700; letter-spacing:.02em}
+  #splash .s{color:var(--soft); font-size:.9em}
+
+  @media (prefers-reduced-motion: reduce){
+    *{transition:none !important; animation:none !important}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="wrap">
+    <div id="stage">
+      <canvas id="cv3" class="board"></canvas>
+      <canvas id="cv2" class="board hide"></canvas>
+      <div class="pbar top">
+        <div class="ptag"><span id="nameTop">Black</span><span class="cap" id="capTop"></span></div>
+        <div class="clock off" id="clockTop">5:00</div>
+      </div>
+      <div id="turnStrip">…</div>
+      <div class="pbar bot">
+        <div class="ptag"><span id="nameBot">White</span><span class="cap" id="capBot"></span></div>
+        <div class="clock off" id="clockBot">5:00</div>
+      </div>
+      <div id="toast"></div>
+    </div>
+    <div id="panel">
+      <div id="openingCard" class="hide"></div>
+      <div id="viewBanner" class="hide">Viewing an earlier move — tap to return to the game</div>
+      <div id="moveListWrap"><div id="moveList"></div></div>
+    </div>
+  </div>
+  <div id="actions">
+    <button class="abtn" id="btnMenu"><span class="ic">☰</span>Menu</button>
+    <button class="abtn" id="btnUndo"><span class="ic">↩</span><span id="undoLbl">Undo</span></button>
+    <button class="abtn" id="btnHint"><span class="ic">💡</span>Hint</button>
+    <button class="abtn" id="btnReplay"><span class="ic">🔁</span>Last move</button>
+    <button class="abtn" id="btnFlip"><span class="ic">⇅</span>Flip</button>
+    <button class="abtn" id="btnDim"><span class="ic" id="dimIc">③</span><span id="dimLbl">3D</span></button>
+  </div>
+</div>
+
+<!-- ===== splash ===== -->
+<div id="splash"><div class="k">♞</div><div class="t">The Chess Room</div><div class="s">chess, taught kindly</div></div>
+
+<!-- ===== main menu ===== -->
+<div class="ov hide" id="ovMenu">
+  <div class="card">
+    <div class="kicker">The Solving Room presents</div>
+    <h1>♞ The Chess Room</h1>
+    <p>Chess for everyone — especially if you're new. Nothing to install, nobody to sign up with, nothing tracked. Just a board that teaches.</p>
+    <button class="bigbtn hide" id="mResume"><span class="em">🕯️</span><span><b>Welcome back</b><small id="mResumeSub">Your game is right where you left it.</small></span></button>
+    <button class="bigbtn" id="mPass"><span class="em">🤝</span><span><b>Pass &amp; play</b><small>Two players, one screen, taking turns.</small></span></button>
+    <button class="bigbtn" id="mCoach"><span class="em">🌱</span><span><b>Play the coach</b><small>A patient opponent who explains, hints, and never gloats.</small></span></button>
+    <button class="bigbtn" id="mLan"><span class="em">📡</span><span><b>Play nearby</b><small>Two devices, same room. A code links them — no accounts, no server.</small></span></button>
+    <button class="bigbtn" id="mOpenings"><span class="em">📖</span><span><b>Opening stories</b><small>Watch the famous openings play themselves, told plainly.</small></span></button>
+    <button class="bigbtn" id="mLearn"><span class="em">🐣</span><span><b>Completely new?</b><small>The rules in five gentle minutes.</small></span></button>
+    <button class="ghostbtn" id="mSettings">Settings</button>
+    <button class="ghostbtn" id="mAbout">About this room</button>
+  </div>
+</div>
+
+<!-- ===== new game config ===== -->
+<div class="ov hide" id="ovNew">
+  <div class="card">
+    <h2 id="newTitle">New game</h2>
+    <div id="sideRow">
+      <p><b>Your colour</b></p>
+      <div class="rowbtns" id="sideChips">
+        <button class="chip sel" data-side="w">♙ White</button>
+        <button class="chip" data-side="b">♟ Black</button>
+        <button class="chip" data-side="r">🎲 Surprise me</button>
+      </div>
+    </div>
+    <div id="skillRow">
+      <p><b>Coach strength</b></p>
+      <div class="rowbtns" id="skillChips">
+        <button class="chip sel" data-skill="sprout">🌱 Sprout<br><small>learning together</small></button>
+        <button class="chip" data-skill="club">🌿 Club<br><small>a fair fight</small></button>
+        <button class="chip" data-skill="mentor">🌳 Mentor<br><small>bring your best</small></button>
+      </div>
+    </div>
+    <p><b>Clock</b> <small id="clockHint">— optional. Fischer increment adds seconds back after every move.</small></p>
+    <div class="rowbtns" id="clockChips">
+      <button class="chip sel" data-clock="none">No clock</button>
+      <button class="chip" data-clock="3+2">3+2 blitz</button>
+      <button class="chip" data-clock="5+0">5 min</button>
+      <button class="chip" data-clock="10+5">10+5 rapid</button>
+      <button class="chip" data-clock="15+10">15+10</button>
+      <button class="chip" data-clock="30+0">30 min</button>
+    </div>
+    <button class="bigbtn" id="newStart"><span class="em">▶️</span><span><b>Begin</b></span></button>
+    <button class="ghostbtn" id="newBack">Back</button>
+  </div>
+</div>
+
+<!-- ===== LAN link ===== -->
+<div class="ov hide" id="ovLink">
+  <div class="card" id="linkCard">
+    <h2>📡 Play nearby</h2>
+    <div id="linkChoose">
+      <p>Two devices in the same room (or same Wi-Fi). One of you hosts and shows a code; the other joins it. The game then flows directly between your devices.</p>
+      <p><b>Your name</b> <small>(shown to your opponent)</small></p>
+      <input class="namebox" id="lanName" maxlength="18" placeholder="e.g. Sam">
+      <button class="bigbtn" id="linkHostBtn"><span class="em">🏠</span><span><b>Host a board</b><small>You'll get an invite to show or send.</small></span></button>
+      <button class="bigbtn" id="linkJoinBtn"><span class="em">🚪</span><span><b>Join a board</b><small>Paste or scan your friend's invite.</small></span></button>
+    </div>
+    <div id="linkHost" class="hide">
+      <p id="linkHostStep1"><b>Step 1 —</b> send this invite to your opponent (AirDrop, message, or let them scan):</p>
+      <div id="qrBox"><canvas id="qrCanvas"></canvas></div>
+      <textarea class="code" id="inviteOut" readonly></textarea>
+      <div class="rowbtns"><button class="chip" id="copyInvite">📋 Copy invite</button><button class="chip" id="shareInvite">📤 Share</button></div>
+      <p><b>Step 2 —</b> paste their reply here:</p>
+      <textarea class="code" id="replyIn" placeholder="CHESS2.…"></textarea>
+      <div class="rowbtns"><button class="chip" id="pasteReply">📥 Paste reply</button><button class="chip" id="scanReply">📷 Scan reply</button><button class="chip sel" id="acceptReply">Link up</button></div>
+    </div>
+    <div id="linkJoin" class="hide">
+      <p><b>Step 1 —</b> paste (or scan) the invite you were sent:</p>
+      <textarea class="code" id="inviteIn" placeholder="CHESS2.…"></textarea>
+      <div class="rowbtns"><button class="chip" id="pasteInvite">📥 Paste</button><button class="chip" id="scanInvite">📷 Scan</button><button class="chip sel" id="makeReply">Answer it</button></div>
+      <div id="joinStep2" class="hide">
+        <p><b>Step 2 —</b> send this reply back to the host (or let them scan it):</p>
+        <div id="qrBox2" style="display:flex;justify-content:center;margin:10px 0"><canvas id="qrCanvas2"></canvas></div>
+        <textarea class="code" id="replyOut" readonly></textarea>
+        <div class="rowbtns"><button class="chip" id="copyReply">📋 Copy reply</button><button class="chip" id="shareReply">📤 Share</button></div>
+        <p id="joinWait">Waiting for the host to link up… <small>leave this open.</small></p>
+      </div>
+    </div>
+    <div id="scanBox" class="hide">
+      <p>Point the camera at the QR code. The camera never leaves this device and stops the moment a code is found.</p>
+      <video id="scanVideo" playsinline style="width:100%;border-radius:12px"></video>
+      <button class="ghostbtn" id="scanStop">Stop scanning</button>
+    </div>
+    <button class="ghostbtn" id="linkBack">Back</button>
+  </div>
+</div>
+
+<!-- ===== promotion ===== -->
+<div class="ov hide" id="ovPromo">
+  <div class="card" style="max-width:380px; text-align:center">
+    <h2>A pawn reaches the last rank!</h2>
+    <p>It becomes any piece you like — nearly everyone chooses the queen.</p>
+    <div id="promoRow"></div>
+  </div>
+</div>
+
+<!-- ===== game over ===== -->
+<div class="ov hide" id="ovEnd">
+  <div class="card" style="text-align:center">
+    <div style="font-size:3em" id="endEmoji">🏁</div>
+    <h2 id="endTitle">Game over</h2>
+    <p id="endSub"></p>
+    <button class="bigbtn" id="endRematch"><span class="em">🔄</span><span><b>Rematch</b><small id="endRematchSub">Same setup, colours swapped.</small></span></button>
+    <button class="bigbtn" id="endReview"><span class="em">🔍</span><span><b>Look back at the game</b><small>Step through the moves on the board.</small></span></button>
+    <button class="ghostbtn" id="endMenu">Back to the menu</button>
+  </div>
+</div>
+
+<!-- ===== settings ===== -->
+<div class="ov hide" id="ovSettings">
+  <div class="card">
+    <h2>Settings</h2>
+    <div class="settingRow"><span class="lbl"><b>Board style</b><small>Warm walnut or cool slate.</small></span>
+      <div class="rowbtns" style="margin:0"><button class="chip sel" id="thWalnut">Walnut</button><button class="chip" id="thSlate">Slate</button></div></div>
+    <div class="settingRow"><span class="lbl"><b>Gentle coach</b><small>A quiet word when a move might lose material — with an offer to take it back.</small></span>
+      <button class="chip sel" id="setCoach">On</button></div>
+    <div class="settingRow"><span class="lbl"><b>Sound</b><small>Soft clicks and chimes, made in the browser.</small></span>
+      <button class="chip sel" id="setSound">On</button></div>
+    <div class="settingRow"><span class="lbl"><b>Clock skin</b><small>Simple digits, or the classic tournament look.</small></span>
+      <div class="rowbtns" style="margin:0"><button class="chip sel" id="ckSimple">Simple</button><button class="chip" id="ckClassic">Classic</button></div></div>
+    <div class="settingRow"><span class="lbl"><b>Show coordinates &amp; helpers</b><small>Legal-move dots and capture rings when you pick up a piece.</small></span>
+      <button class="chip sel" id="setHelpers">On</button></div>
+    <button class="ghostbtn" id="setBack">Done</button>
+  </div>
+</div>
+
+<!-- ===== learn ===== -->
+<div class="ov hide" id="ovLearn">
+  <div class="card" id="learnCard">
+    <h2>🐣 The rules, gently</h2>
+    <div id="learnBody"></div>
+    <div class="rowbtns" style="justify-content:space-between">
+      <button class="chip" id="learnPrev">← Back</button>
+      <button class="chip sel" id="learnNext">Next →</button>
+    </div>
+    <button class="ghostbtn" id="learnClose">Close</button>
+  </div>
+</div>
+
+<!-- ===== openings browser ===== -->
+<div class="ov hide" id="ovOpenings">
+  <div class="card">
+    <h2>📖 Opening stories</h2>
+    <p>Tap any opening and the board will play it for you, one thought at a time. Then take over and play on, if you like.</p>
+    <div id="openingList"></div>
+    <button class="ghostbtn" id="openingsBack">Back</button>
+  </div>
+</div>
+
+<!-- ===== about ===== -->
+<div class="ov hide" id="ovAbout">
+  <div class="card">
+    <h2>About this room</h2>
+    <p><b>The Chess Room</b> is part of <a href="../" style="color:var(--amber)">The Solving Room</a> — free things that teach, built plainly.</p>
+    <p>Everything runs in your browser: the rules engine (checked against millions of known-good positions), the 3D board (raw WebGL, no libraries), the coach, and the clock. Nearby play links two devices directly with WebRTC — the invite code <i>is</i> the connection; there is no server, no account, no tracking of any kind.</p>
+    <p>Install it (Add to Home Screen) and it works offline, and quietly tells you when a new version is ready.</p>
+    <p>MIT licensed. Be kind to your opponent — especially when you're winning.</p>
+    <button class="ghostbtn" id="aboutBack">Back</button>
+  </div>
+</div>
+
+<!-- ===== recovery (self-healing) ===== -->
+<div class="ov hide" id="ovRecover">
+  <div class="card" style="text-align:center">
+    <div style="font-size:3em">🩹</div>
+    <h2>Something stumbled</h2>
+    <p>The room hit an unexpected error. Your game is saved after every move, so nothing is lost. Pick a way back in:</p>
+    <button class="bigbtn" id="recReload"><span class="em">🔄</span><span><b>Reload the room</b><small>Almost always enough.</small></span></button>
+    <button class="bigbtn" id="rec2D"><span class="em">🎴</span><span><b>Reload in 2D</b><small>If the 3D board is the trouble.</small></span></button>
+    <button class="bigbtn" id="recFresh"><span class="em">🌅</span><span><b>Fresh start</b><small>Clears the saved game and settings.</small></span></button>
+  </div>
+</div>
+
+<script src="engine.js"></script>
+<script src="book.js"></script>
+<script src="eco.js"></script>
+<script src="gfx2d.js"></script>
+<script src="gfx3d.js"></script>
+<script src="net.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
