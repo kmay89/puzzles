@@ -1397,8 +1397,12 @@ function wireSW() {
     if (reg.installing) watch(reg.installing);
     reg.addEventListener("updatefound", function () { if (reg.installing) watch(reg.installing); });
   }).catch(function () {});
+  /* on a first visit clients.claim() also fires controllerchange — only
+     reload when a controller existed at load (a genuine version swap) */
+  var hadController = !!navigator.serviceWorker.controller;
   var reloading = false;
   navigator.serviceWorker.addEventListener("controllerchange", function () {
+    if (!hadController) { hadController = true; return; }
     if (reloading) return;
     reloading = true;
     location.reload();
