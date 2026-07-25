@@ -563,6 +563,22 @@ var cam={
 var PITCH_MAX=1.35, BASE_DIST=7.4;
 
 var teachAim=null;   /* {yaw,pitch} — the room shows you the face to turn */
+var HOME_VIEW={yaw:-0.62, pitch:0.44};
+var homeAim=false;   /* springing back to the useful view */
+var viewChip=document.getElementById("viewChip");
+
+function strayedFromHome(){
+  var dy=cam.yaw-HOME_VIEW.yaw;
+  dy-=Math.round(dy/(2*Math.PI))*2*Math.PI;
+  return Math.abs(dy)>0.35 || Math.abs(cam.pitch-HOME_VIEW.pitch)>0.3
+      || Math.abs(cam.targetZoom-1)>0.12;
+}
+function goHomeView(){
+  homeAim=true;
+  cam.targetZoom=1;
+  cam.vyaw=0; cam.vpitch=0;
+}
+
 function camTick(dt){
   if(teachAim && !cam.dragging){
     var dy=teachAim.yaw-cam.yaw;
@@ -570,6 +586,15 @@ function camTick(dt){
     cam.yaw += dy*Math.min(1,2.6*dt);
     cam.pitch += (teachAim.pitch-cam.pitch)*Math.min(1,2.6*dt);
     cam.vyaw=0; cam.vpitch=0;
+  } else if(homeAim && !cam.dragging){
+    var dyh=HOME_VIEW.yaw-cam.yaw;
+    dyh-=Math.round(dyh/(2*Math.PI))*2*Math.PI;
+    cam.yaw += dyh*Math.min(1,3*dt);
+    cam.pitch += (HOME_VIEW.pitch-cam.pitch)*Math.min(1,3*dt);
+    cam.vyaw=0; cam.vpitch=0;
+    if(Math.abs(dyh)<0.01 && Math.abs(HOME_VIEW.pitch-cam.pitch)<0.01){
+      cam.yaw=HOME_VIEW.yaw; cam.pitch=HOME_VIEW.pitch; homeAim=false;
+    }
   }
   if(!cam.dragging){
     cam.yaw += cam.vyaw*dt;
@@ -622,9 +647,11 @@ canvas.addEventListener("contextmenu", function(e){ e.preventDefault(); });
 canvas.addEventListener("pointerdown", function(e){
   if(AR&&AR.mode()==="window"){ AR.tap(); return; }
   if(AR&&AR.mode()) return;
+  e.preventDefault();   /* a drag on the stage never selects text */
   canvas.setPointerCapture(e.pointerId);
   pointersDown[e.pointerId]={x:e.clientX, y:e.clientY};
   cam.idleAt=performance.now();
+  homeAim=false;   /* your hand outranks the compass */
   if(pointerCount()===2){
     /* a second finger always means "let me look around" */
     cancelGrip();
@@ -700,7 +727,11 @@ canvas.addEventListener("wheel", function(e){
   cam.idleAt=performance.now();
 },{passive:false});
 canvas.addEventListener("dblclick", function(){
-  cam.targetZoom=1; cam.vyaw=0; cam.vpitch=0;
+  goHomeView();
+  cam.idleAt=performance.now();
+});
+viewChip.addEventListener("click", function(){
+  goHomeView();
   cam.idleAt=performance.now();
 });
 
@@ -1412,6 +1443,7 @@ function setKind(k){
   walkSteps=null; threadRadii=null; hereNow=null;
   if(mapView) mapView.setWalk(null);
   btnScan.hidden = k!=="cube3";
+  viewChip.textContent = k==="mega" ? "reset view ⌖" : "white up ⌖";
   btnSpecimen.hidden = !(k==="cube2"||k==="cube3");
   btnSpecimen.textContent = k==="cube2" ? "the antipode ✦" : "the superflip ✦";
   if(statsOpen){
@@ -1527,6 +1559,9 @@ function frame(now){
   animTick(now);
   if(glow>0) glow=Math.max(0, glow-dt*1.1);
   if(arMode) arAmbient(now);
+
+  /* the compass appears only when the view has wandered */
+  viewChip.hidden = !!arMode || !!teachAim || homeAim || !strayedFromHome();
 
   if(mapOpen&&mapView){
     if(playing&&playing.at>=0){

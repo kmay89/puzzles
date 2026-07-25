@@ -147,6 +147,20 @@
   @keyframes undoIn{from{transform:translateY(8px);opacity:0}to{transform:none;opacity:1}}
   @media (max-width:640px){ #undoChip{bottom:11rem; right:.7rem} }
 
+  /* the compass: appears only when the view has wandered */
+  #viewChip{
+    position:fixed; right:1.1rem; top:5rem; z-index:5;
+    font:italic .8rem Georgia,serif; cursor:pointer; border-radius:999px;
+    padding:.4rem 1rem; border:1px solid rgba(185,168,143,.5);
+    background:rgba(14,10,7,.8); color:var(--ink-dim);
+    animation:undoIn .25s ease-out;
+  }
+  #viewChip:hover{color:var(--lamp); border-color:var(--lamp)}
+  #viewChip[hidden]{display:none}
+  body.map-on #viewChip{right:calc(45vw + 1.1rem)}
+  @media (max-width:900px){ body.map-on #viewChip{right:.7rem} }
+  @media (max-width:640px){ #viewChip{top:auto; bottom:13.4rem; right:.7rem} }
+
   /* ---------- the teacher ---------- */
   #teachBadge{
     position:fixed; left:50%; top:16%; transform:translateX(-50%);
@@ -165,7 +179,8 @@
     display:block; margin-top:.3rem;
     font:italic .7rem ui-monospace,Menlo,Consolas,monospace; color:var(--ink-faint);
   }
-  #teachBar{display:flex; gap:.6rem; pointer-events:auto}
+  #teachBar{display:flex; gap:.6rem; pointer-events:none}
+  #teachBar button{pointer-events:auto}
   #teachBar[hidden]{display:none}
   #teachBadge[hidden]{display:none}
   #teachBar button{
@@ -329,8 +344,13 @@
     font-size:.64rem; letter-spacing:.04em; color:var(--ink-faint);
     text-align:center; max-width:44rem;
   }
-  .actions{display:flex; gap:.6rem; pointer-events:auto; margin-top:.2rem;
+  /* containers are ghosts; only the buttons themselves are solid */
+  .actions{display:flex; gap:.6rem; pointer-events:none; margin-top:.2rem;
            flex-wrap:wrap; justify-content:center}
+  .actions button{pointer-events:auto}
+  header, .picker, .deskline, #teachBar, #undoChip, #viewChip{
+    -webkit-user-select:none; user-select:none;
+  }
   .actions button{
     font:italic .95rem Georgia,serif; cursor:pointer; border-radius:999px;
     padding:.5rem 1.35rem; border:1px solid rgba(185,168,143,.4);
@@ -407,6 +427,7 @@
 <p id="mapCap" aria-hidden="true"></p>
 <p id="mapLive" aria-live="polite"></p>
 <button id="undoChip" hidden>undo that ↺</button>
+<button id="viewChip" hidden>white up ⌖</button>
 <div id="teachBadge" hidden aria-live="polite"></div>
 <aside id="stats" hidden aria-label="Live statistics of the puzzle's state space">
   <p class="kicker">the numbers</p>
@@ -689,7 +710,7 @@ off. The introduction is still there, though — <a href="../">go back</a>.</p>
 <script src="puzzle.js?v=3"></script>
 <script src="map.js?v=3"></script>
 <script src="ar.js?v=1"></script>
-<script src="app.js?v=9"></script>
+<script src="app.js?v=10"></script>
 <script src="scan.js?v=2"></script>
 </body>
 </html>
