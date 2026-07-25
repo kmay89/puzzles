@@ -134,6 +134,19 @@
     #stats{left:.6rem; bottom:auto; top:8.8rem; width:17rem}
   }
 
+  /* ---------- forgiveness ---------- */
+  #undoChip{
+    position:fixed; right:1.1rem; bottom:9.2rem; z-index:5;
+    font:italic .85rem Georgia,serif; cursor:pointer; border-radius:999px;
+    padding:.45rem 1.1rem; border:1px solid rgba(255,201,122,.55);
+    background:rgba(14,10,7,.85); color:var(--lamp);
+    animation:undoIn .25s ease-out;
+  }
+  #undoChip:hover{background:rgba(255,201,122,.14)}
+  #undoChip[hidden]{display:none}
+  @keyframes undoIn{from{transform:translateY(8px);opacity:0}to{transform:none;opacity:1}}
+  @media (max-width:640px){ #undoChip{bottom:11rem; right:.7rem} }
+
   /* ---------- the teacher ---------- */
   #teachBadge{
     position:fixed; left:50%; top:16%; transform:translateX(-50%);
@@ -393,6 +406,7 @@
 <canvas id="map" aria-label="A map of the puzzle's state space: every dot is a reachable position, and the glowing thread is the walk the cube is taking"></canvas>
 <p id="mapCap" aria-hidden="true"></p>
 <p id="mapLive" aria-live="polite"></p>
+<button id="undoChip" hidden>undo that ↺</button>
 <div id="teachBadge" hidden aria-live="polite"></div>
 <aside id="stats" hidden aria-label="Live statistics of the puzzle's state space">
   <p class="kicker">the numbers</p>
@@ -616,6 +630,12 @@
     mode the room steps aside: make the asked-for turn <i>yourself</i> and
     the lesson advances; make the wrong one and it's gently undone so you
     can try again.</p>
+    <p>Looking around never fights turning: <b>two fingers anywhere</b> (or
+    the dark, or the right mouse button) move your head instead of the
+    puzzle, pinch leans in, and on a mouse the cursor tells you before you
+    click — a pointing finger over the puzzle, an open hand over the dark.
+    Turn something by accident and an <b>undo ↺</b> chip waits quietly for
+    seven seconds. Mistakes here cost one tap, never a mood.</p>
 
     <h2>For small hands</h2>
     <p>Teach mode is built for learning with a real cube in your lap: hold it
@@ -669,7 +689,7 @@ off. The introduction is still there, though — <a href="../">go back</a>.</p>
 <script src="puzzle.js?v=3"></script>
 <script src="map.js?v=3"></script>
 <script src="ar.js?v=1"></script>
-<script src="app.js?v=8"></script>
+<script src="app.js?v=9"></script>
 <script src="scan.js?v=2"></script>
 </body>
 </html>

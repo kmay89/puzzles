@@ -360,6 +360,27 @@ function drawArrow(model, now){
    picks the best match, the layer follows with rubber, and release
    snaps to the nearest legal turn or springs home. */
 var grip=null;   /* {sticker, sx, sy, chosen, t, dir, angle, order} */
+var manualCount=0, undoMv=null, undoTimer=null;
+var undoChip=document.getElementById("undoChip");
+
+/* an accidental turn should cost one tap, not a mood */
+function offerUndo(mv){
+  undoMv=mv;
+  undoChip.hidden=false;
+  clearTimeout(undoTimer);
+  undoTimer=setTimeout(function(){ undoChip.hidden=true; undoMv=null; }, 7000);
+}
+undoChip.addEventListener("click", function(){
+  if(!undoMv||anim) return;
+  var inv=P.invert(undoMv), tw=P.twists[inv.t];
+  var turns=inv.n>tw.order/2 ? inv.n-tw.order : inv.n;
+  splitIndex(tw.members);
+  anim={ mv:inv, twist:tw, t0:performance.now(), dur:380,
+         easeFn:easeSnap, target:turns*tw.step, silent:"undo" };
+  setStatus("undone ↺");
+  undoChip.hidden=true; undoMv=null;
+  clearTimeout(undoTimer);
+});
 
 function camRay(px, py){
   var w=canvas.clientWidth, h=canvas.clientHeight;
@@ -444,10 +465,25 @@ function gripAllowed(){
   return true;
 }
 
+/* the touched sticker answers immediately: "I'm held" */
+function stickerLamp(i, on){
+  if(!geo) return;
+  if(!on){ refreshColors(); return; }
+  var c=pal[colors[i]], r=geo.topRanges[i];
+  for(var j=0;j<r.count;j++){
+    geo.colorArr[(r.start+j)*3]  =Math.min(1,c[0]*1.45+0.18);
+    geo.colorArr[(r.start+j)*3+1]=Math.min(1,c[1]*1.45+0.18);
+    geo.colorArr[(r.start+j)*3+2]=Math.min(1,c[2]*1.45+0.18);
+  }
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufCol);
+  gl.bufferData(gl.ARRAY_BUFFER, geo.colorArr, gl.DYNAMIC_DRAW);
+}
+
 function gripStart(px, py){
   var hit=hitSticker(camRay(px, py));
   if(hit<0) return false;
   grip={ sticker:hit, sx:px, sy:py, chosen:false, angle:0 };
+  stickerLamp(hit, true);
   overtureStage=2;
   return true;
 }
@@ -469,6 +505,7 @@ function gripMove(px, py){
     grip.chosen=true; grip.t=best;
     grip.dir=[bestDir[0]/l, bestDir[1]/l];
     grip.order=P.twists[best].order;
+    stickerLamp(grip.sticker, false);   /* the whole layer glows now */
     splitIndex(P.twists[best].members);
   }
   var tw=P.twists[grip.t];
@@ -480,7 +517,7 @@ function gripMove(px, py){
 
 function gripEnd(){
   if(!grip) return;
-  if(!grip.chosen){ grip=null; return; }
+  if(!grip.chosen){ stickerLamp(grip.sticker, false); grip=null; return; }
   var tw=P.twists[grip.t];
   var steps=Math.round(grip.angle/tw.step);
   if(steps>2) steps=2; if(steps<-2) steps=-2;
@@ -551,31 +588,106 @@ function camTick(dt){
   cam.dist = BASE_DIST*cam.fit*cam.zoom;
 }
 
-canvas.addEventListener("pointerdown", function(e){
-  if(AR&&AR.mode()==="window"){ AR.tap(); return; }
-  if(AR&&AR.mode()) return;
-  canvas.setPointerCapture(e.pointerId);
-  cam.idleAt=performance.now();
-  /* a touch on the puzzle grips a layer; a touch on the dark orbits */
-  if(gripAllowed() && gripStart(e.clientX, e.clientY)) return;
-  cam.dragging=true; cam.lastX=e.clientX; cam.lastY=e.clientY;
-  cam.lastT=performance.now(); cam.vyaw=0; cam.vpitch=0;
-});
-canvas.addEventListener("pointermove", function(e){
-  if(grip){ gripMove(e.clientX, e.clientY); return; }
-  if(!cam.dragging) return;
-  var now=performance.now(), dt=Math.max(1,now-cam.lastT)/1000;
-  var dx=(e.clientX-cam.lastX)/canvas.clientHeight*3.2;
-  var dy=(e.clientY-cam.lastY)/canvas.clientHeight*3.2;
-  /* pushing past a pole meets rubber, not a wall */
+/* ---------- one hand, two clear intentions ----------
+   Touch the puzzle → it lights up, you're holding a layer.
+   Two fingers anywhere (or the dark, or the right mouse button) →
+   you're moving your head, not the puzzle. Mistakes cost one tap. */
+var pointersDown={}, multi=null;
+
+function pointerCount(){ return Object.keys(pointersDown).length; }
+function multiState(){
+  var ids=Object.keys(pointersDown);
+  var a=pointersDown[ids[0]], b=pointersDown[ids[1]];
+  return { cx:(a.x+b.x)/2, cy:(a.y+b.y)/2,
+           d:Math.max(20, Math.hypot(a.x-b.x, a.y-b.y)) };
+}
+function orbitBy(dx, dy, dt){
   var give=(cam.pitch>PITCH_MAX||cam.pitch<-PITCH_MAX)?0.28:1;
   cam.yaw+=dx; cam.pitch+=dy*give;
   cam.vyaw=0.7*cam.vyaw+0.3*(dx/dt);
   cam.vpitch=0.7*cam.vpitch+0.3*(dy*give/dt);
-  cam.lastX=e.clientX; cam.lastY=e.clientY; cam.lastT=now;
-  cam.idleAt=now;
+}
+function cancelGrip(){
+  if(!grip) return;
+  stickerLamp(grip.sticker, false);
+  if(grip.chosen){
+    anim={ mv:{t:grip.t,n:0}, twist:P.twists[grip.t], t0:performance.now(),
+           dur:200, easeFn:easeSnap, from:grip.angle, target:0, noCommit:true };
+  }
+  grip=null;
+}
+
+canvas.addEventListener("contextmenu", function(e){ e.preventDefault(); });
+
+canvas.addEventListener("pointerdown", function(e){
+  if(AR&&AR.mode()==="window"){ AR.tap(); return; }
+  if(AR&&AR.mode()) return;
+  canvas.setPointerCapture(e.pointerId);
+  pointersDown[e.pointerId]={x:e.clientX, y:e.clientY};
+  cam.idleAt=performance.now();
+  if(pointerCount()===2){
+    /* a second finger always means "let me look around" */
+    cancelGrip();
+    cam.dragging=false;
+    multi=multiState();
+    multi.t=performance.now();
+    return;
+  }
+  if(pointerCount()>2) return;
+  /* right or middle button orbits from anywhere */
+  if(e.button===2||e.button===1){
+    cam.dragging=true; cam.lastX=e.clientX; cam.lastY=e.clientY;
+    cam.lastT=performance.now(); cam.vyaw=0; cam.vpitch=0;
+    return;
+  }
+  /* a touch on the puzzle grips a layer; the dark orbits */
+  if(gripAllowed() && gripStart(e.clientX, e.clientY)) return;
+  cam.dragging=true; cam.lastX=e.clientX; cam.lastY=e.clientY;
+  cam.lastT=performance.now(); cam.vyaw=0; cam.vpitch=0;
 });
-function endDrag(){
+
+var hoverAt=0;
+canvas.addEventListener("pointermove", function(e){
+  if(pointersDown[e.pointerId])
+    pointersDown[e.pointerId]={x:e.clientX, y:e.clientY};
+  if(multi){
+    if(pointerCount()>=2){
+      var s=multiState();
+      var now2=performance.now(), dt2=Math.max(1,now2-multi.t)/1000;
+      orbitBy((s.cx-multi.cx)/canvas.clientHeight*3.2,
+              (s.cy-multi.cy)/canvas.clientHeight*3.2, dt2);
+      cam.targetZoom=Math.max(0.62, Math.min(1.6, cam.targetZoom*multi.d/s.d));
+      s.t=now2; multi=s;
+      cam.idleAt=now2;
+    }
+    return;
+  }
+  if(grip){ gripMove(e.clientX, e.clientY); return; }
+  if(cam.dragging){
+    var now=performance.now(), dt=Math.max(1,now-cam.lastT)/1000;
+    orbitBy((e.clientX-cam.lastX)/canvas.clientHeight*3.2,
+            (e.clientY-cam.lastY)/canvas.clientHeight*3.2, dt);
+    cam.lastX=e.clientX; cam.lastY=e.clientY; cam.lastT=now;
+    cam.idleAt=now;
+    return;
+  }
+  /* the cursor tells you what a click would do, before you click */
+  if(e.pointerType==="mouse"&&!e.buttons){
+    var now3=performance.now();
+    if(now3-hoverAt>90){
+      hoverAt=now3;
+      var can=gripAllowed()&&hitSticker(camRay(e.clientX,e.clientY))>=0;
+      canvas.style.cursor=can?"pointer":"grab";
+    }
+  }
+});
+
+function endDrag(e){
+  if(e&&pointersDown[e.pointerId]!==undefined) delete pointersDown[e.pointerId];
+  if(multi){
+    if(pointerCount()<2){ multi=null; cam.dragging=false; }
+    return;
+  }
   if(grip){ gripEnd(); return; }
   cam.dragging=false; cam.idleAt=performance.now();
   if(REDUCED){ cam.vyaw=0; cam.vpitch=0; }
@@ -591,23 +703,6 @@ canvas.addEventListener("dblclick", function(){
   cam.targetZoom=1; cam.vyaw=0; cam.vpitch=0;
   cam.idleAt=performance.now();
 });
-/* pinch zoom */
-var pinch=null;
-canvas.addEventListener("touchstart", function(e){
-  if(e.touches.length===2){
-    pinch=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,
-                     e.touches[0].clientY-e.touches[1].clientY);
-  }
-},{passive:true});
-canvas.addEventListener("touchmove", function(e){
-  if(e.touches.length===2&&pinch){
-    var d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,
-                     e.touches[0].clientY-e.touches[1].clientY);
-    cam.targetZoom=Math.max(0.62, Math.min(1.6, cam.targetZoom*pinch/d));
-    pinch=d;
-  }
-},{passive:true});
-canvas.addEventListener("touchend", function(){ pinch=null; },{passive:true});
 
 /* ---------- move queue & animation ---------- */
 var queue=[];         /* [{mv, dur}] */
@@ -915,8 +1010,11 @@ function animTick(now){
         anim={ mv:inv, twist:tw2, t0:performance.now(), dur:420,
                easeFn:easeSnap, target:turns2*tw2.step, silent:"undo" };
       } else {
+        manualCount++;
         setStatus("that was "+nm+" — "+moveDesc(nm)+
-          (P.isSolved(colors)?" · and it's home!":""));
+          (P.isSolved(colors)?" · and it's home!":
+           manualCount<=2?" · two fingers (or the dark) to look around":""));
+        offerUndo(doneMv);
       }
       return;
     }
