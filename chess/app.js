@@ -5,7 +5,7 @@
    engine.js; the boards live in gfx2d.js / gfx3d.js; the nearby link
    lives in net.js; the openings live in book.js. This file only
    conducts. */
-/* global Chess, Book, Gfx2D, Gfx3D, Net */
+/* global Chess, Book, Eco, Gfx2D, Gfx3D, Net */
 (function () {
 "use strict";
 
@@ -510,6 +510,23 @@ function giveHint() {
     if (bookPick) break;
   }
   if (bookPick) { chosen = bookPick.m; why = bookPick.entry.why || ("a main road of the " + bookPick.entry.name + "."); }
+  /* no curated line? the full ECO table may still know a named path */
+  if (!bookPick && typeof Eco !== "undefined") {
+    var ecoNext = Eco.next(sans);
+    for (var e1 = 0; e1 < ecoNext.length && !bookPick; e1++) {
+      var em = Chess.fromSAN(G, ecoNext[e1].san);
+      if (!em) continue;
+      for (var e2 = 0; e2 < res.ranked.length; e2++) {
+        var er = res.ranked[e2];
+        if (er.move.from === em.from && er.move.to === em.to && res.ranked[0].score - er.score < 90) {
+          chosen = em;
+          why = "a known road — this is the " + ecoNext[e1].name + ".";
+          bookPick = { m: em };
+          break;
+        }
+      }
+    }
+  }
   var san = Chess.toSAN(G, chosen);
   hintArrow = [chosen.from, chosen.to];
   syncBoard();
@@ -551,19 +568,30 @@ function pieceName(p) {
   return ["", "pawn", "knight", "bishop", "rook", "queen", "king"][Math.abs(p)];
 }
 
-/* ===== opening narration ===== */
+/* ===== opening narration =====
+   Two layers: book.js carries the teaching (ideas, per-move reasons)
+   for the great openings; eco.js — the full lichess chess-openings
+   table, CC0 — carries precise names for the other ~3,800 lines the
+   players may wander into. */
 function narrateOpening(san, source) {
-  if (!G || G.played.length > 16 || mode === "tour") return;
+  if (!G || G.played.length > 36 || mode === "tour") return;
   var sans = G.played.map(function (r) { return r.san.replace(/[+#]$/, ""); });
   var entry = Book.match(sans);
+  var eco = (typeof Eco !== "undefined") ? Eco.match(sans) : null;
   var card = $("openingCard");
-  if (entry) {
+  var title = null, idea = entry ? entry.idea : "";
+  if (eco && (!entry || eco.seq.split(" ").length >= entry.seq.split(" ").length)) {
+    title = eco.name + " <small style='opacity:.6'>" + eco.eco + "</small>";
+  } else if (entry) {
+    title = entry.name;
+  }
+  if (title) {
     card.classList.remove("hide");
-    card.innerHTML = "<b>" + entry.name + "</b>" + entry.idea;
-    if (entry.name !== lastNarratedOpening && sans.length >= 2) {
-      lastNarratedOpening = entry.name;
-      if (source !== "net") toast("📖 <b>" + entry.name + "</b> — " + entry.idea, null, 6000);
-    }
+    card.innerHTML = "<b>" + title + "</b>" + idea;
+  }
+  if (entry && entry.name !== lastNarratedOpening && sans.length >= 2) {
+    lastNarratedOpening = entry.name;
+    if (source !== "net") toast("📖 <b>" + entry.name + "</b> — " + entry.idea, null, 6000);
   }
 }
 
