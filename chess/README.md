@@ -105,6 +105,19 @@ tools/              dev-only, never shipped:
   (STUN only for candidate discovery). Your moves travel directly
   between the two devices, and an invite can carry a game-in-progress,
   so a dropped link resumes exactly where it broke.
+- **Joining is meant to feel like magic.** Two phones held up to each
+  other is the whole interaction: each side shows a big framed code and
+  watches through its camera at the same time, so neither player has to
+  decide who scans. Every code the app sees — scanned, pasted, arriving
+  on the clipboard, typed, or tapped as a link — enters through one
+  door (`feedCode`) and advances the handshake by itself; there is no
+  "confirm" button to hunt for. The invite travels as a **tappable
+  link** (tap it and the room opens already joining); the reply travels
+  as a **bare code**, deliberately, because a link would reload the
+  host's page and throw the connection away. Scanning an invite greets
+  you by the host's name, so you can see you got the right board, and
+  the moment the boards meet both sides get the same little ceremony:
+  two kings sliding together, and the seats named.
 - **Self-healing** by design: saves are written after every move and
   survive reloads; a corrupt save is quietly retired; if the 3D context
   is lost the same game continues in 2D on the spot; repeated errors

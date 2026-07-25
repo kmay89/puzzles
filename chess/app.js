@@ -787,17 +787,20 @@ function resumeSave(s) {
 var scanStream = null;
 function lanHandlers() {
   Net.onLink = function () {
-    snd("link");
-    hideAllOverlays();
+    stopScan();
     if (Net.isHost) {
       Net.send({ t: "hi", name: lanMy || "Host", clock: lanCfg.clockStr,
                  yourSide: lanCfg.mySide === 1 ? -1 : 1, sans: lanCfg.sans || [],
                  wMs: lanCfg.wMs, bMs: lanCfg.bMs });
       beginLan(lanCfg.mySide, lanCfg.clockStr, lanCfg.sans || [], lanCfg.wMs, lanCfg.bMs);
+      celebrateLink();
     } else {
+      /* the joiner waits for the host's greeting: it carries their name
+         and which seat we're in, so the celebration can show both */
       Net.send({ t: "hi2", name: lanMy || "Friend" });
+      $("linkTitle").textContent = "Linked — setting up the board…";
+      codeBusy("dealing the pieces…");
     }
-    toast("📡 Linked! Two devices, one board. Play kindly.");
   };
   Net.onDrop = function () {
     if (mode !== "lan" || over) return;
@@ -810,11 +813,15 @@ function lanHandlers() {
     switch (msg.t) {
       case "hi":
         lanOpp = String(msg.name || "Friend").slice(0, 18);
-        if (!Net.isHost) beginLan(msg.yourSide === 1 ? 1 : -1, msg.clock, msg.sans || [], msg.wMs, msg.bMs);
+        if (!Net.isHost) {
+          beginLan(msg.yourSide === 1 ? 1 : -1, msg.clock, msg.sans || [], msg.wMs, msg.bMs);
+          celebrateLink();
+        }
         syncBars(); syncTurnStrip();
         break;
       case "hi2":
         lanOpp = String(msg.name || "Friend").slice(0, 18);
+        renderSeats();      /* the host may already be celebrating — keep it true */
         syncBars(); syncTurnStrip();
         break;
       case "mv": onNetMove(msg); break;
@@ -887,114 +894,275 @@ function lanRematch() {
   toast("🔄 Rematch! You have " + (lanSide === 1 ? "white" : "black") + " this time.");
 }
 
-/* ----- link UI flow ----- */
+/* ----- the join flow -----
+   One shell, two roles. Whichever side you are, the room shows your
+   code and (when the camera is available) watches for theirs at the
+   same time — so two people at a table just hold their phones up and
+   it happens. Every code that reaches the app, however it arrives
+   (scanned, pasted, shared-link, typed, or found on the clipboard),
+   goes through feedCode() and advances the handshake by itself.
+   `linkStep`: 0 choosing · 1 showing my code · 2 waiting to connect */
+var linkStep = 0, linkRole = null, scanOn = false, scanStop = null, clipWatch = 0;
+
+function scanSupported() {
+  return ("BarcodeDetector" in window) && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+}
 function openLink() {
   hideAllOverlays();
+  stopScan();
+  linkStep = 0; linkRole = null;
   $("ovLink").classList.remove("hide");
   $("linkChoose").classList.remove("hide");
-  $("linkHost").classList.add("hide");
-  $("linkJoin").classList.add("hide");
-  $("scanBox").classList.add("hide");
+  $("linkStage").classList.add("hide");
   $("lanName").value = prefs.name || "";
-  var scanOK = ("BarcodeDetector" in window) && navigator.mediaDevices;
-  $("scanReply").classList.toggle("hide", !scanOK);
-  $("scanInvite").classList.toggle("hide", !scanOK);
+  $("linkCodeIn").value = "";
+  $("codeDrop").open = false;
 }
 function grabName() {
   lanMy = ($("lanName").value || "").trim().slice(0, 18);
   prefs.name = lanMy; savePrefs();
 }
+/* paint the shared stage for the current step */
+function linkStage(opts) {
+  $("linkChoose").classList.add("hide");
+  $("linkStage").classList.remove("hide");
+  $("linkTitle").textContent = opts.title;
+  $("linkHow").innerHTML = opts.how;
+  $("linkNote").textContent = opts.note || "The camera stays on this device and stops the moment it sees a code.";
+  $("linkStage").classList.toggle("waiting", !!opts.waiting);
+  $("qrFrame").classList.toggle("hide", !opts.showCode);
+  $("linkCam").classList.toggle("hide", !scanSupported());
+  var r1 = $("rail1"), r2 = $("rail2"), r3 = $("rail3");
+  r1.className = "railStep" + (opts.step === 1 ? " on" : " done");
+  r2.className = "railStep" + (opts.step === 2 ? " on" : (opts.step > 2 ? " done" : ""));
+  r3.className = "railStep" + (opts.step === 3 ? " on" : "");
+}
+/* Show my half of the handshake.
+   The host's invite travels as a tappable link — tapping it on the other
+   phone opens the room and joins in one motion, the nicest path there is.
+   The joiner's reply travels as a bare code on purpose: it is only ever
+   consumed by a host who is already mid-handshake, and a link would
+   reload their page and throw the connection away. */
+function showMyCode(rawCode, asLink) {
+  var shown = asLink ? Net.url(rawCode) : rawCode;
+  $("linkCodeOut").value = shown;
+  $("qrWait").classList.add("hide");
+  Net.drawQR($("qrCanvas"), shown);
+  $("qrFrame").classList.remove("hide");
+}
+function codeBusy(msg) {
+  $("qrWait").classList.remove("hide");
+  $("qrWait").innerHTML = '<span class="spin"></span>' + msg;
+}
+
+/* --- host --- */
 function hostFlow(resume) {
   grabName();
   var doHost = function (clockStr, side) {
     var s = side === "r" ? (Math.random() < 0.5 ? 1 : -1) : (side === "b" ? -1 : 1);
+    linkRole = "host"; linkStep = 1;
     lanCfg = { mySide: s, clockStr: clockStr,
                sans: resume && G && mode === "lan" ? G.played.map(function (r) { return r.san; }) : [],
                wMs: resume && clock.on ? Math.round(clock.w) : undefined,
                bMs: resume && clock.on ? Math.round(clock.b) : undefined };
     $("ovLink").classList.remove("hide");
-    $("linkChoose").classList.add("hide");
-    $("linkHost").classList.remove("hide");
-    $("inviteOut").value = "…making your invite (a second or two)…";
+    linkStage({ step: 1, showCode: true, title: "Show this to your friend",
+      how: "On their device: <b>Play together</b> → <b>Join their board</b>, then point their camera at this code." });
+    codeBusy("making your code…");
     Net.host({ name: lanMy }).then(function (code) {
-      var url = Net.url(code);
-      $("inviteOut").value = url;
-      Net.drawQR($("qrCanvas"), url);
+      showMyCode(code, true);           /* invite: a tappable link */
+      /* the host watches for the reply straight away, so the two phones
+         can simply face each other */
+      startScan();
+      startClipWatch();
     }).catch(function () {
-      $("inviteOut").value = "That didn't work — close and try again.";
+      codeBusy("that didn't work — close and try again");
     });
   };
   if (resume) { doHost(clockStrOf(), lanSide === 1 ? "w" : "b"); return; }
-  /* fresh host: pick clock & colour via the new-game card */
   openNewCard("lanhost", function (opts) { doHost(opts.clockStr, opts.side); });
 }
+
+/* --- joiner --- */
 function joinFlow(prefill) {
   grabName();
-  $("linkChoose").classList.add("hide");
-  $("linkJoin").classList.remove("hide");
-  if (prefill) { $("inviteIn").value = prefill; answerInvite(); }
+  linkRole = "join"; linkStep = 1;
+  $("ovLink").classList.remove("hide");
+  linkStage({ step: 1, showCode: false,
+    title: "Point at their code",
+    how: "Hold your camera up to your friend's screen — or tap <b>Paste a code</b> if they sent it to you." });
+  if (prefill) { feedCode(prefill); return; }
+  startScan();                 /* the camera opens itself: nothing to tap */
+  startClipWatch();
 }
-function answerInvite() {
-  var code = $("inviteIn").value;
-  if (!/CHESS(1|2)\./.test(code)) { toast("That doesn't look like an invite — it starts with CHESS2."); return; }
-  Net.join(code).then(function (res) {
-    if (!res) { toast("Couldn't read that invite. Ask for a fresh one — they expire when the host closes the page."); return; }
-    $("joinStep2").classList.remove("hide");
-    var url = Net.url(res.reply);
-    $("replyOut").value = url;
-    Net.drawQR($("qrCanvas2"), url);
-  }).catch(function () { toast("Couldn't read that invite — try copying it again."); });
+
+/* --- the one door every code comes through --- */
+function feedCode(text) {
+  if (!text || !/CHESS(1|2)\./.test(text)) return false;
+  if (linkRole === "join" && linkStep === 1) {
+    stopScan();
+    linkStage({ step: 2, showCode: true, waiting: true, title: "Now show them yours",
+      how: "Almost there — let your friend's camera see this code and you're playing.",
+      note: "Keep this open; the boards link themselves the moment they see it." });
+    codeBusy("answering…");
+    linkStep = 2;
+    Net.join(text).then(function (res) {
+      if (!res) {
+        toast("Couldn't read that invite — ask for a fresh one.");
+        joinFlow(null);
+        return;
+      }
+      /* the invite carried their name: greet them by it, so you can see
+         at a glance that you scanned the right board */
+      var host = res.meta && res.meta.name ? String(res.meta.name).slice(0, 18) : "";
+      if (host) {
+        lanOpp = host;
+        $("linkTitle").textContent = "Found " + host + " — now show them yours";
+        $("linkHow").innerHTML = "Let <b>" + escHtml(host) + "</b>'s camera see this code and you're playing.";
+      }
+      showMyCode(res.reply, false);     /* reply: a bare code, never a link */
+    }).catch(function () {
+      toast("Couldn't read that invite — try again.");
+      joinFlow(null);
+    });
+    return true;
+  }
+  if (linkRole === "host" && linkStep === 1) {
+    stopScan();
+    linkStep = 2;
+    linkStage({ step: 2, showCode: true, waiting: true, title: "Got it — linking…",
+      how: "Their answer came through. Shaking hands…" });
+    codeBusy("linking…");
+    Net.acceptReply(text).then(function (ok) {
+      if (!ok) {
+        toast("That code didn't match this board — showing yours again.");
+        linkStep = 1;
+        linkStage({ step: 1, showCode: true, title: "Show this to your friend",
+          how: "On their device: <b>Play together</b> → <b>Join their board</b>." });
+        showMyCode($("linkCodeOut").value);
+        startScan();
+      }
+      /* success continues in Net.onLink → celebrateLink() */
+    });
+    return true;
+  }
+  return false;
 }
-function acceptReplyFlow() {
-  Net.acceptReply($("replyIn").value).then(function (ok) {
-    if (!ok) toast("That reply didn't fit this invite. Copy the whole code and try again.");
-    /* success continues in Net.onLink */
+
+/* --- the live camera --- */
+function startScan() {
+  if (!scanSupported() || scanOn) return;
+  var video = $("scanVideo"), frame = $("camFrame");
+  scanOn = true;
+  frame.classList.remove("hide", "found");
+  $("camHint").textContent = "looking for their code…";
+  var stopped = false;
+  scanStop = function () {
+    stopped = true; scanOn = false;
+    if (scanStream) { scanStream.getTracks().forEach(function (t) { t.stop(); }); scanStream = null; }
+    try { video.srcObject = null; } catch (e) {}
+    frame.classList.add("hide");
+  };
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).then(function (stream) {
+    if (stopped) { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
+    scanStream = stream;
+    video.srcObject = stream;
+    video.play().catch(function () {});
+    var det = new window.BarcodeDetector({ formats: ["qr_code"] });
+    (function poll() {
+      if (stopped) return;
+      det.detect(video).then(function (codes) {
+        if (stopped) return;
+        var hit = codes && codes.filter(function (c) { return /CHESS(1|2)\./.test(c.rawValue); })[0];
+        if (hit) {
+          frame.classList.add("found");
+          $("camHint").textContent = "got it!";
+          snd("hint");
+          feedCode(hit.rawValue);
+          return;
+        }
+        setTimeout(poll, 220);
+      }).catch(function () { setTimeout(poll, 400); });
+    })();
+  }).catch(function () {
+    scanStop();
+    $("linkNote").textContent = "No camera here — tap “Paste a code” instead, or send yours with Share.";
   });
 }
+function stopScan() {
+  if (scanStop) { scanStop(); scanStop = null; }
+  scanOn = false;
+  stopClipWatch();
+}
+/* a friend who AirDropped/messaged the code has it on the clipboard —
+   glance at it (only where the browser allows a silent read) so the
+   code lands without anyone tapping anything */
+function startClipWatch() {
+  stopClipWatch();
+  if (!(navigator.clipboard && navigator.clipboard.readText)) return;
+  clipWatch = setInterval(function () {
+    if (document.visibilityState !== "visible") return;
+    navigator.clipboard.readText().then(function (t) {
+      if (t && /CHESS(1|2)\./.test(t) && t !== $("linkCodeOut").value) feedCode(t);
+    }).catch(function () { stopClipWatch(); });   /* permission denied: stop asking */
+  }, 1200);
+}
+function stopClipWatch() { if (clipWatch) { clearInterval(clipWatch); clipWatch = 0; } }
+
+/* --- the celebration ---
+   The two greetings ("hi" carries the host's name, "hi2" the joiner's)
+   can land either side of this card appearing, so the seats are always
+   re-rendered from current state rather than patched in place. */
+function renderSeats() {
+  var meWhite = lanSide === 1;
+  $("seatRow").innerHTML =
+    '<div class="seat me"><span class="who">' + escHtml(lanMy || "You") + '</span><span class="side">' + (meWhite ? "♔ White" : "♚ Black") + '</span></div>' +
+    '<div class="seat"><span class="who">' + escHtml(lanOpp || "Your friend") + '</span><span class="side">' + (meWhite ? "♚ Black" : "♔ White") + '</span></div>';
+  $("linkedSub").textContent = "Two devices, one board — " + (meWhite ? "you open." : "they open.");
+}
+function celebrateLink() {
+  stopScan();
+  hideAllOverlays();
+  snd("link");
+  $("linkedTitle").textContent = "You're linked!";
+  renderSeats();
+  $("ovLinked").classList.remove("hide");
+  var meWhite = lanSide === 1;
+  setTimeout(function () {
+    $("ovLinked").classList.add("hide");
+    toast(meWhite ? "Your move — white goes first." : "They move first. Watch the centre.");
+  }, REDUCED ? 1200 : 2600);
+}
+function escHtml(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+
 function clip(text) {
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(function () { toast("Copied. Send it however you like."); },
       function () { toast("Couldn't reach the clipboard — long-press the code to copy it."); });
   } else toast("Long-press the code to copy it.");
 }
-function pasteInto(el) {
+function pasteCode() {
   if (navigator.clipboard && navigator.clipboard.readText) {
-    navigator.clipboard.readText().then(function (t) { el.value = t; },
-      function () { toast("Couldn't read the clipboard — paste into the box by hand."); });
-  } else toast("Paste into the box by hand.");
+    navigator.clipboard.readText().then(function (t) {
+      if (!feedCode(t)) { $("codeDrop").open = true; toast("No code on the clipboard — paste it into the box."); }
+    }, function () { $("codeDrop").open = true; toast("Paste the code into the box below."); });
+  } else { $("codeDrop").open = true; toast("Paste the code into the box below."); }
 }
 function share(text) {
-  if (navigator.share) navigator.share({ title: "Chess with me?", text: "Join my chess board: ", url: text }).catch(function () {});
-  else clip(text);
-}
-function startScan(onCode) {
-  var video = $("scanVideo");
-  $("scanBox").classList.remove("hide");
-  var stopped = false;
-  function stop() {
-    stopped = true;
-    if (scanStream) { scanStream.getTracks().forEach(function (t) { t.stop(); }); scanStream = null; }
-    $("scanBox").classList.add("hide");
-  }
-  $("scanStop").onclick = stop;
-  navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).then(function (stream) {
-    scanStream = stream;
-    video.srcObject = stream;
-    video.play();
-    var det = new window.BarcodeDetector({ formats: ["qr_code"] });
-    (function poll() {
-      if (stopped) return;
-      det.detect(video).then(function (codes) {
-        if (stopped) return;
-        var hit = codes && codes.find(function (c) { return /CHESS(1|2)\./.test(c.rawValue); });
-        if (hit) { stop(); onCode(hit.rawValue); return; }
-        setTimeout(poll, 240);
-      }).catch(function () { setTimeout(poll, 400); });
-    })();
-  }).catch(function () {
-    stop();
-    toast("The camera said no — paste the code instead.");
-  });
+  if (!text) return;
+  var isLink = /^https?:/.test(text);
+  if (navigator.share) {
+    /* a link shares as a link (tap it and the board opens, already
+       joining); a bare reply code shares as text */
+    var msg = isLink
+      ? { title: "Chess?", text: "Tap to join my board:", url: text }
+      : { title: "My reply code", text: text };
+    navigator.share(msg).catch(function () {});
+  } else clip(text);
 }
 
 /* ===== opening stories (the tour) ===== */
@@ -1086,7 +1254,7 @@ function showLearn(n) {
 
 /* ===== overlays & menus ===== */
 function hideAllOverlays() {
-  ["ovMenu", "ovNew", "ovLink", "ovPromo", "ovEnd", "ovSettings", "ovLearn", "ovOpenings", "ovAbout"].forEach(function (id) {
+  ["ovMenu", "ovNew", "ovLink", "ovLinked", "ovPromo", "ovEnd", "ovSettings", "ovLearn", "ovOpenings", "ovAbout"].forEach(function (id) {
     $(id).classList.add("hide");
   });
 }
@@ -1350,19 +1518,16 @@ function wireUI() {
   $("linkHostBtn").addEventListener("click", function () { hostFlow(false); });
   $("linkJoinBtn").addEventListener("click", function () { joinFlow(null); });
   $("linkBack").addEventListener("click", function () {
-    if (scanStream) { scanStream.getTracks().forEach(function (t) { t.stop(); }); scanStream = null; }
+    stopScan();
+    Net.close();
     showMenu();
   });
-  $("copyInvite").addEventListener("click", function () { clip($("inviteOut").value); });
-  $("shareInvite").addEventListener("click", function () { share($("inviteOut").value); });
-  $("pasteReply").addEventListener("click", function () { pasteInto($("replyIn")); });
-  $("scanReply").addEventListener("click", function () { startScan(function (code) { $("replyIn").value = code; acceptReplyFlow(); }); });
-  $("acceptReply").addEventListener("click", acceptReplyFlow);
-  $("pasteInvite").addEventListener("click", function () { pasteInto($("inviteIn")); });
-  $("scanInvite").addEventListener("click", function () { startScan(function (code) { $("inviteIn").value = code; answerInvite(); }); });
-  $("makeReply").addEventListener("click", answerInvite);
-  $("copyReply").addEventListener("click", function () { clip($("replyOut").value); });
-  $("shareReply").addEventListener("click", function () { share($("replyOut").value); });
+  $("linkShare").addEventListener("click", function () { share($("linkCodeOut").value); });
+  $("linkPaste").addEventListener("click", pasteCode);
+  $("linkCam").addEventListener("click", function () { scanOn ? stopScan() : startScan(); });
+  $("linkCopy").addEventListener("click", function () { clip($("linkCodeOut").value); });
+  /* typing or pasting into the box links as soon as the code is complete */
+  $("linkCodeIn").addEventListener("input", function () { feedCode(this.value); });
 
   /* recovery */
   $("recReload").addEventListener("click", function () { location.reload(); });
@@ -1449,5 +1614,6 @@ try { boot(); } catch (e) { panic(); throw e; }
 
 /* dev handle, in the house style */
 window.__cr = { get game() { return G; }, Chess: Chess, Book: Book, Net: Net,
-  get mode() { return mode; }, startGame: startGame, get renderer() { return R; } };
+  get mode() { return mode; }, startGame: startGame, get renderer() { return R; },
+  feedCode: feedCode, openLink: openLink };   /* the join flow's one door, for tests */
 })();
