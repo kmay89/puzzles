@@ -1290,7 +1290,8 @@ function setStatus(t){ elStatus.textContent=t; }
 function setBusy(b){
   btnScramble.disabled=b; btnSolve.disabled=b;
   btnStop.hidden=!b;
-  pickers.forEach(function(p){ p.disabled=b; });
+  /* the picker is never locked — setKind() knows how to interrupt a
+     running show gracefully, so changing puzzles mid-animation just works */
 }
 
 /* ---------- the solver in the back office ---------- */
@@ -1464,6 +1465,7 @@ pickers.forEach(function(btn){
 
 function setKind(k){
   if(kind!==null) overtureStage=2;   /* a choice was made; no need to perform */
+  grip=null;                         /* a hand mid-twist lets go */
   kind=k;
   P=PuzzleEngine.build(k==="mega"?"mega":k);
   pal=KINDS[k].pal.map(hex2rgb);
