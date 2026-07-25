@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="The Solving Room — five twisty puzzles that solve themselves in your browser, with the real mathematics on display: God's algorithm, Kociemba's two-phase, a map of every position, a live statistical engine, a camera scanner, a patient teacher, and a door into your own room. No libraries, no build step, no accounts.">
+<meta name="theme-color" content="#0e0a07">
+<link rel="canonical" href="https://kmay89.github.io/puzzles/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="The Solving Room — puzzles that solve themselves, honestly">
+<meta property="og:description" content="Watch a megaminx untie itself. See every position of a pocket cube as a galaxy. Learn what group theory is by holding it.">
+<meta property="og:url" content="https://kmay89.github.io/puzzles/">
+<meta property="og:image" content="https://kmay89.github.io/puzzles/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://kmay89.github.io/puzzles/og.png">
+<title>The Solving Room — an introduction</title>
+<style>
+  /* same six tokens as the room itself — see room/index.html for the
+     documented set. MIT; steal freely. */
+  :root{
+    --room:#0e0a07; --room-deep:#080604;
+    --lamp:#ffc97a; --ink:#f4e9d8; --ink-dim:#b9a88f; --ink-faint:#7e6f5b;
+    --green:#63e6a9;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; color:var(--ink);
+    font:17px/1.65 Georgia,"Times New Roman",serif;
+    background:
+      radial-gradient(120vmax 80vmax at 50% -10%, #1a1209 0%, var(--room) 46%, var(--room-deep) 100%);
+  }
+  a{color:var(--lamp); text-decoration:none; border-bottom:1px solid rgba(255,201,122,.35)}
+  a:hover{border-color:var(--lamp)}
+  .wrap{max-width:44rem; margin:0 auto; padding:0 1.3rem}
+  .kicker{
+    font-family:ui-monospace,Menlo,Consolas,monospace;
+    font-size:.68rem; letter-spacing:.22em; text-transform:uppercase;
+    color:var(--ink-faint); margin:0;
+  }
+
+  /* hero */
+  header{padding:4.5rem 0 2.5rem; text-align:center}
+  h1{font-size:clamp(2rem,6vw,3.1rem); font-weight:normal; font-style:italic; margin:.3rem 0 .6rem}
+  .lede{color:var(--ink-dim); font-style:italic; max-width:34rem; margin:0 auto 1.6rem}
+  .doors{display:flex; gap:.7rem; justify-content:center; flex-wrap:wrap}
+  .doors a{
+    font:italic 1.05rem Georgia,serif; border-radius:999px; padding:.65rem 1.6rem;
+    border:1px solid rgba(185,168,143,.5); color:var(--ink);
+  }
+  .doors a:hover{border-color:var(--lamp); color:var(--lamp)}
+  .doors a.ar{
+    border-color:rgba(255,201,122,.8); color:var(--lamp);
+    background:rgba(255,201,122,.08);
+  }
+  .doors a.ar:hover{box-shadow:0 0 18px rgba(255,201,122,.3)}
+  .doors .hint{
+    flex-basis:100%; margin-top:.3rem;
+    font:italic .78rem Georgia,serif; color:var(--ink-faint);
+  }
+  .heroimg{
+    display:block; width:min(46rem,92vw); margin:2.4rem auto 0; border-radius:16px;
+    border:1px solid rgba(185,168,143,.25);
+    box-shadow:0 20px 60px rgba(0,0,0,.5);
+  }
+
+  /* essay */
+  section{padding:1.6rem 0}
+  h2{
+    font-size:1.15rem; font-weight:normal; font-style:italic; color:var(--lamp);
+    margin:1.6rem 0 .5rem;
+  }
+  p{margin:.65rem 0; color:var(--ink-dim)}
+  p b{color:var(--ink); font-weight:normal}
+  .num{font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.85em; color:var(--ink)}
+  .aside{
+    border-left:2px solid rgba(255,201,122,.4); padding:.1rem 0 .1rem 1rem;
+    margin:1rem 0; font-style:italic;
+  }
+  ul{color:var(--ink-dim); padding-left:1.2rem}
+  li{margin:.45rem 0}
+  li b{color:var(--ink); font-weight:normal}
+
+  .rooms{
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));
+    gap:.8rem; margin:1rem 0;
+  }
+  .rooms div{
+    border:1px solid rgba(185,168,143,.25); border-radius:12px;
+    padding: .9rem 1rem; background:rgba(8,6,4,.5);
+  }
+  .rooms b{display:block; color:var(--lamp); font-style:italic; margin-bottom:.3rem}
+  .rooms p{font-size:.88rem; margin:.2rem 0}
+
+  footer{
+    margin-top:3rem; padding:2rem 0 3rem; text-align:center;
+    border-top:1px solid rgba(185,168,143,.18);
+    font-size:.85rem; color:var(--ink-faint);
+  }
+</style>
+</head>
+<body>
+
+<header class="wrap">
+  <p class="kicker">kmay89 / puzzles</p>
+  <h1>The Solving Room</h1>
+  <p class="lede">Five twisty puzzles that scramble and solve themselves in your
+  browser — with the actual mathematics on display, not behind glass. No
+  libraries, no build step, no accounts, nothing tracked.</p>
+  <nav class="doors" aria-label="Enter">
+    <a href="room/">enter the room →</a>
+    <a class="ar" href="room/?ar=1">view in AR ✦</a>
+    <span class="hint">the AR door wants a phone; everything else works anywhere WebGL does</span>
+  </nav>
+  <a href="room/"><img class="heroimg" src="og.png" alt="A glowing megaminx floating in a warm dark room"></a>
+</header>
+
+<main class="wrap">
+  <section>
+    <h2>What this is</h2>
+    <p>A hand-built laboratory for twisty puzzles: a 2×2, 3×3, 4×4 and 5×5
+    Rubik's cube, and a <b>megaminx</b> — the twelve-sided one. Press scramble
+    and any of them ties itself in a knot; press solve and it finds its way
+    home, with real showmanship. But the point isn't the trick. Every
+    instrument in the room exists to let you <i>see the mathematics happen</i>:
+    a map where every dot is a genuine position, a statistics panel that
+    computes its numbers live from the solver's own tables, a camera scanner
+    that reads your physical cube, a teacher that walks you through its
+    solution one glowing arrow at a time, and a door that puts the whole
+    thing on your table in augmented reality.</p>
+    <p>If you left it alone just now, the room already showed you: it opens
+    with an overture — a scramble and an untying, performed slowly, then
+    fast, then slowly again, the way a magician paces a reveal.</p>
+  </section>
+
+  <section>
+    <h2>What group theory is, in plain words</h2>
+    <p>Take any object and list all the ways you can <i>change it and still
+    be able to change it back</i> — rotations, reflections, twists. Now
+    notice three things about that list: doing one change after another
+    gives you something still on the list; there's a "do nothing" change;
+    and every change has an undo. A collection with those three properties
+    is called a <b>group</b>, and group theory is the study of what such
+    collections can and cannot do. It sounds austere. It is actually the
+    mathematics of <i>symmetry</i>, and it runs through crystals, particle
+    physics, cryptography, and the wallpaper in your hallway.</p>
+    <p>A Rubik's cube is a group you can hold. Its elements are the
+    <span class="num">43,252,003,274,489,856,000</span> positions; its
+    generators are the six face turns; composing moves is the group
+    operation; the solved cube is the identity; and solving is nothing more
+    or less than <b>finding the inverse</b> of whatever was done to it.
+    Scrambling and solving are the same walk, taken in opposite
+    directions.</p>
+    <p class="aside">The map in the room draws this literally. Lay out every
+    position as a dot, join positions that differ by one turn, and you get
+    the cube's <b>Cayley graph</b> — a universe where "distance from home"
+    means "minimum turns to solve". For the pocket cube the room charts all
+    3,674,160 positions exactly; watch a solve and you'll see the comet fall
+    inward one shell per turn, never a wasted move, because on that puzzle
+    the room solves <i>optimally</i> and optimality is visible.</p>
+  </section>
+
+  <section>
+    <h2>How it solves — honestly</h2>
+    <p>Different sizes call for different honesty:</p>
+    <ul>
+      <li><b>2×2 — God's algorithm.</b> The space is small enough to visit
+      every single position with a breadth-first search and write down its
+      exact distance from home. Every solution shown is provably the
+      shortest possible; none needs more than 11 turns, the pocket cube's
+      God's number.</li>
+      <li><b>3×3 — Kociemba's two-phase algorithm</b>, the mathematics real
+      solving machines use. Phase one steers orientation and slice
+      coordinates into a subgroup called
+      <span class="num">G1 = ⟨U, D, R², L², F², B²⟩</span> — a sub-universe
+      about two billion times smaller — and phase two finishes inside it
+      without ever breaking what phase one fixed. Pruning tables built in a
+      background worker give the search a proven "at least this far" compass.
+      Solutions land around twenty turns; the ticker even underlines the
+      moment the algebra changes gears.</li>
+      <li><b>4×4, 5×5 and the megaminx — Ariadne's thread.</b> At
+      10⁴⁵–10⁷⁴ positions, no optimal solver fits in a browser tab and even
+      the God's numbers are unknown. So these puzzles remember every turn of
+      their scramble and solve by playing the <b>group inverse</b> of that
+      word, simplified where turns cancel. The room says so on the label —
+      no trick is ever passed off as more than it is.</li>
+    </ul>
+    <p>One engine underneath makes this trustworthy: the program never hard-codes
+    what a twist does. It rotates a slab of sticker polygons in space and asks
+    <i>who landed where</i> — the permutation is discovered from geometry, and
+    the solvers derive their move tables through the same discovery, so the
+    picture and the mathematics cannot disagree.</p>
+  </section>
+
+  <section>
+    <h2>What you get out of it</h2>
+    <div class="rooms">
+      <div><b>if you're curious</b>
+        <p>An hour of "wait, <i>show me that again</i>". Fling the puzzle,
+        open the map beside it, watch a 20-turn solve dive through a
+        subgroup. The mathematics essay inside explains every instrument in
+        plain language.</p></div>
+      <div><b>if you have a real cube</b>
+        <p>Scan it with your camera (or paint the colours in), and the room
+        solves <i>your</i> cube — then teaches it back one turn at a time,
+        with a glowing arrow on the face to turn and a camera that aims
+        itself. A "back" button forgives everything.</p></div>
+      <div><b>if you're a mathematician</b>
+        <p>Exact censuses computed live from the God table, proven-distance
+        readouts, a walkable Cayley graph, an antipode button, the
+        superflip, and a sequence lab where any word in the group becomes a
+        performance you can step through forwards and backwards.</p></div>
+      <div><b>if you build things</b>
+        <p>View source — it's meant to be read. Six colour tokens, two
+        system typefaces, three rules of motion, raw WebGL, and a worker
+        doing the heavy math. Architecture notes in
+        <span class="num">room/README.md</span>. MIT licensed: take it,
+        retune the six colours, make it yours.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>The instruments, briefly</h2>
+    <ul>
+      <li><b>the map ✦</b> — the state space as a galaxy; every dot a real
+      position or solver coordinate, the walk synced turn-for-turn.</li>
+      <li><b>the numbers ✦</b> — live statistics: exact distributions, exact
+      means, and provable sentences like "deeper than 97% of all
+      positions".</li>
+      <li><b>scan your cube ✦</b> — six camera poses; frames never leave
+      your device; impossible scans are caught by the laws of the cube.</li>
+      <li><b>the score ✦</b> — write any sequence in notation (patterns
+      included) and have it performed or taught, forwards and back.</li>
+      <li><b>put it in your room ✦</b> — WebXR on Android; a gyroscope
+      window on iPhone, labelled honestly; either way it sits there
+      quietly scrambling and solving itself like an ornament that
+      thinks.</li>
+    </ul>
+  </section>
+</main>
+
+<footer class="wrap">
+  <p>built by hand at <a href="https://kmay89.com">kmay89.com</a> ·
+  <a href="https://github.com/kmay89/puzzles">source</a> · MIT ·
+  no frameworks, no trackers, no build step</p>
+</footer>
+
+</body>
+</html>

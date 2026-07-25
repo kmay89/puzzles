@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="The solving room — a 2×2, 3×3, 4×4, 5×5 and a megaminx that scramble and solve themselves. God's algorithm, Kociemba's two-phase, and a camera on a spring. Raw WebGL, no libraries.">
+<meta name="theme-color" content="#0e0a07">
+<link rel="canonical" href="https://kmay89.github.io/puzzles/room/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Karl Meves">
+<meta property="og:title" content="The solving room — puzzles that solve themselves">
+<meta property="og:description" content="Five twisty puzzles, two real solving algorithms, one camera on a spring. Watch a megaminx untie itself.">
+<meta property="og:url" content="https://kmay89.github.io/puzzles/room/">
+<meta property="og:image" content="https://kmay89.github.io/puzzles/room/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="A glowing megaminx beside a galaxy of puzzle states — the solving room.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://kmay89.github.io/puzzles/room/og.png">
+<title>The solving room — Karl Meves</title>
+<style>
+  /* ================= design tokens =================
+     The whole room is built from these. Steal freely (MIT).
+
+     Surfaces — a warm dark room, lit from within:
+       --room       the walls          --room-deep  the corners
+     Ink — parchment text, three strengths:
+       --ink        speaking           --ink-dim    murmuring
+       --ink-faint  labels & captions
+     Light — the two meanings of the room:
+       --lamp       attention, warmth, "you are here"
+       --green      home, correctness, arrival
+
+     Type: Georgia italic for the voice, ui-monospace for the facts.
+     Motion: easeOutBack for snaps (k≈0.9), exponential damping for
+     momentum (v *= 0.14^dt), critically-damped springs at the limits.
+     ================================================== */
+  :root{
+    --room:#0e0a07; --room-deep:#080604;
+    --lamp:#ffc97a; --ink:#f4e9d8; --ink-dim:#b9a88f; --ink-faint:#7e6f5b;
+    --green:#63e6a9;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; color:var(--ink);
+    font:16px/1.6 Georgia,"Times New Roman",serif;
+    background:
+      radial-gradient(120vmax 90vmax at 50% 38%, #1a1209 0%, var(--room) 46%, var(--room-deep) 100%);
+    overflow:hidden;
+  }
+  #stage{
+    position:fixed; inset:0; width:100%; height:100%;
+    touch-action:none; cursor:grab; display:block;
+  }
+  #stage:active{cursor:grabbing}
+  #stage.solved{filter:drop-shadow(0 0 34px rgba(99,230,169,.5))}
+
+  /* ---------- the map of everywhere ---------- */
+  #map{
+    position:fixed; top:0; right:0; width:45vw; height:100%;
+    display:none; touch-action:none; cursor:grab;
+    border-left:1px solid rgba(185,168,143,.14);
+    background:radial-gradient(90vmin 90vmin at 50% 45%, rgba(26,18,9,.55), transparent 70%);
+  }
+  #map:active{cursor:grabbing}
+  body.map-on #map{display:block}
+  body.map-on #stage{width:55vw}
+  body.map-on header{right:45vw}
+  body.map-on .picker{left:27.5vw; right:auto}
+  body.map-on .deskline{right:45vw}
+  #mapCap,#mapLive{
+    position:fixed; right:1rem; width:calc(45vw - 2rem); display:none;
+    font-family:ui-monospace,Menlo,Consolas,monospace; text-align:right;
+    pointer-events:none; z-index:5;
+  }
+  #mapCap{ top:1.1rem; font-size:.62rem; letter-spacing:.05em; color:var(--ink-faint); }
+  #mapLive{ top:auto; bottom:1.1rem; font-size:.8rem; color:var(--lamp); font-weight:bold; }
+  body.map-on #mapCap, body.map-on #mapLive{display:block}
+  @media (max-width:900px){
+    body.map-on #stage{width:100vw; height:54svh}
+    #map{width:100vw; height:46svh; top:auto; bottom:0; border-left:none;
+         border-top:1px solid rgba(185,168,143,.14)}
+    body.map-on header, body.map-on .picker, body.map-on .deskline{right:0}
+    body.map-on .deskline{bottom:auto; top:calc(54svh - 8.2rem); padding-bottom:0}
+    body.map-on #fact{display:none}
+    body.map-on #teachBadge{left:50%}
+    #mapCap{ top:auto; bottom:2.1rem; right:.8rem; width:auto; max-width:92vw }
+    #mapLive{ bottom:.55rem; right:.8rem; width:auto }
+  }
+
+  /* ---------- the numbers: a live statistical engine ---------- */
+  #stats{
+    position:fixed; left:1.1rem; bottom:1.1rem; z-index:5; width:21rem;
+    max-width:calc(100vw - 2rem); pointer-events:none;
+    background:rgba(8,6,4,.84); border:1px solid rgba(185,168,143,.25);
+    border-radius:12px; padding:.8rem .95rem; backdrop-filter:blur(4px);
+  }
+  #stats[hidden]{display:none}
+  #stats .kicker{margin-bottom:.4rem}
+  #statBars{
+    display:flex; align-items:flex-end; gap:3px; height:4.2rem; margin:.3rem 0 .15rem;
+  }
+  #statBars .sb{flex:1; border-radius:2px 2px 0 0; opacity:.75; position:relative; min-width:4px}
+  #statBars .sb.here{
+    opacity:1; outline:1px solid var(--ink);
+    box-shadow:0 0 10px rgba(255,201,122,.7);
+  }
+  #statBars .sb-growth{
+    width:100%; height:.55rem; border-radius:999px; background:rgba(185,168,143,.18);
+    overflow:hidden; align-self:center;
+  }
+  #statBars .sb-growth i{
+    display:block; height:100%; border-radius:999px;
+    background:linear-gradient(90deg, #63e6a9, #ffc97a, #ff6b5c);
+    transition:width .3s;
+  }
+  #statCap{
+    margin:0; font-family:ui-monospace,Menlo,Consolas,monospace;
+    font-size:.6rem; letter-spacing:.03em; color:var(--ink-faint);
+  }
+  #statLines p{
+    margin:.35rem 0 0; font-style:italic; font-size:.8rem; color:var(--ink-dim);
+  }
+  #statLines b{color:var(--lamp); font-style:normal}
+  #statLines sup{font-size:.65em}
+  @media (min-width:901px){
+    body.map-on.stats-on .deskline{left:23rem; right:45vw}
+  }
+  @media (max-width:900px){
+    body.map-on #stats{display:none}   /* one instrument at a time on a phone */
+    #stats{left:.6rem; bottom:auto; top:8.8rem; width:17rem}
+  }
+
+  /* ---------- the teacher ---------- */
+  #teachBadge{
+    position:fixed; left:50%; top:16%; transform:translateX(-50%);
+    z-index:5; text-align:center; pointer-events:none;
+    background:rgba(8,6,4,.82); border:1px solid rgba(255,201,122,.35);
+    border-radius:14px; padding:.9rem 1.6rem; max-width:min(30rem,88vw);
+    backdrop-filter:blur(4px);
+  }
+  body.map-on #teachBadge{left:27.5vw}
+  #teachBadge b{
+    display:block; font:bold 2.4rem ui-monospace,Menlo,Consolas,monospace;
+    color:var(--lamp); letter-spacing:.04em;
+  }
+  #teachBadge span{display:block; font-style:italic; color:var(--ink-dim); font-size:.95rem}
+  #teachBadge i{
+    display:block; margin-top:.3rem;
+    font:italic .7rem ui-monospace,Menlo,Consolas,monospace; color:var(--ink-faint);
+  }
+  #teachBar{display:flex; gap:.6rem; pointer-events:auto}
+  #teachBar[hidden]{display:none}
+  #teachBadge[hidden]{display:none}
+  #teachBar button{
+    font:italic .85rem Georgia,serif; cursor:pointer; border-radius:999px;
+    padding:.4rem 1.1rem; border:1px solid rgba(255,201,122,.5);
+    background:rgba(14,10,7,.65); color:var(--lamp);
+  }
+  #teachBar button:hover{background:rgba(255,201,122,.14)}
+
+  /* ---------- the score ---------- */
+  #score{
+    position:fixed; inset:0; z-index:7; overflow-y:auto;
+    background:rgba(8,6,4,.94); backdrop-filter:blur(6px);
+    opacity:0; visibility:hidden; transition:opacity .35s, visibility .35s;
+  }
+  #score.show{opacity:1; visibility:visible}
+  #score[hidden]{display:none}
+  #scoreInput{
+    width:100%; resize:vertical; border-radius:10px; padding:.7rem .9rem;
+    font:1rem ui-monospace,Menlo,Consolas,monospace; letter-spacing:.06em;
+    color:var(--ink); background:rgba(23,19,16,.9);
+    border:1px solid rgba(185,168,143,.35);
+  }
+  #scoreInput:focus{outline:none; border-color:var(--lamp)}
+  #scoreTokens{
+    min-height:1.6rem; margin:.5rem 0; display:flex; flex-wrap:wrap; gap:.4rem;
+    font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.85rem;
+  }
+  #scoreTokens .ok{color:var(--green)}
+  #scoreTokens .bad{color:#ff6b5c; text-decoration:line-through}
+  #scoreTokens .dim{color:var(--ink-faint); font-style:italic}
+  #scorePatterns button{
+    font:italic .8rem Georgia,serif; cursor:pointer; border-radius:999px;
+    padding:.35rem .9rem; border:1px solid rgba(183,156,255,.45);
+    background:rgba(14,10,7,.65); color:var(--ink-dim);
+  }
+  #scorePatterns button:hover{color:#b79cff; border-color:#b79cff}
+
+  /* ---------- the AR doorway prompt ---------- */
+  #arPrompt{
+    position:fixed; inset:0; z-index:8; display:flex;
+    align-items:center; justify-content:center; padding:1.2rem;
+    background:rgba(8,6,4,.8); backdrop-filter:blur(5px);
+  }
+  #arPrompt[hidden]{display:none}
+  .arp-card{
+    max-width:22rem; text-align:center; padding:1.4rem 1.6rem;
+    background:rgba(14,10,7,.95); border:1px solid rgba(255,201,122,.4);
+    border-radius:16px;
+  }
+  .arp-card p{color:var(--ink-dim); font-size:.92rem}
+  .arp-card .s-row{justify-content:center}
+
+  /* ---------- the scanning booth ---------- */
+  #scan{
+    position:fixed; inset:0; z-index:7; overflow-y:auto;
+    background:rgba(8,6,4,.94); backdrop-filter:blur(6px);
+    opacity:0; visibility:hidden; transition:opacity .35s, visibility .35s;
+  }
+  #scan.show{opacity:1; visibility:visible}
+  .s-inner{max-width:34rem; margin:0 auto; padding:4.5rem 1.2rem 4rem}
+  .s-text{color:var(--ink-dim); font-size:.95rem}
+  .s-say{color:var(--ink); font-style:italic}
+  .s-row{display:flex; gap:.6rem; flex-wrap:wrap; margin:1rem 0}
+  .s-btn{
+    font:italic .95rem Georgia,serif; cursor:pointer; border-radius:999px;
+    padding:.5rem 1.3rem; border:1px solid rgba(99,230,169,.55);
+    background:rgba(14,10,7,.65); color:var(--ink);
+  }
+  .s-btn:hover:not(:disabled){border-color:var(--green); color:var(--green)}
+  .s-btn:disabled{opacity:.4; cursor:default}
+  .s-quiet{border-color:rgba(185,168,143,.4)}
+  .s-camwrap{position:relative; margin:.6rem 0}
+  .s-camwrap video{width:100%; border-radius:12px; display:block}
+  .s-grid{
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    width:62%; aspect-ratio:1; display:grid;
+    grid-template:repeat(3,1fr)/repeat(3,1fr); gap:2px; pointer-events:none;
+  }
+  .s-grid span{border:2px dashed rgba(244,233,216,.55); border-radius:8px}
+  .s-net{display:flex; flex-direction:column; gap:4px; margin:.8rem 0; align-items:center}
+  .s-netrow{display:flex; gap:4px}
+  .s-face{
+    display:grid; grid-template:repeat(3,1.35rem)/repeat(3,1.35rem); gap:3px;
+    padding:3px; background:rgba(23,19,16,.9); border-radius:6px;
+  }
+  .s-hole{background:transparent}
+  .s-sw{border:none; border-radius:4px; cursor:pointer; padding:0}
+  .s-sw:not(:disabled):hover{outline:2px solid var(--lamp)}
+  .s-center{outline:2px solid rgba(244,233,216,.35); cursor:default}
+  .s-verdict{font-style:italic; color:var(--lamp); min-height:1.4rem; font-size:.9rem}
+  .glowpool{
+    position:fixed; left:50%; top:42%; width:56vmin; height:56vmin;
+    transform:translate(-50%,-50%);
+    background:radial-gradient(circle, rgba(255,201,122,.10), transparent 62%);
+    pointer-events:none;
+  }
+
+  header{
+    position:fixed; top:0; left:0; right:0; padding:1.1rem 1.4rem;
+    display:flex; justify-content:space-between; align-items:flex-start;
+    pointer-events:none; z-index:4;
+  }
+  .kicker{
+    margin:0; font-family:ui-monospace,Menlo,Consolas,monospace;
+    font-size:.68rem; letter-spacing:.22em; text-transform:uppercase;
+    color:var(--ink-faint);
+  }
+  h1{margin:.15rem 0 0; font-size:1.35rem; font-weight:normal; font-style:italic}
+  .back{
+    pointer-events:auto; color:var(--ink-dim); text-decoration:none;
+    font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.72rem;
+    letter-spacing:.08em; border-bottom:1px solid rgba(185,168,143,.35);
+  }
+  .back:hover{color:var(--lamp); border-color:var(--lamp)}
+
+  .picker{
+    position:fixed; top:4.6rem; left:50%; transform:translateX(-50%);
+    display:flex; gap:.4rem; z-index:4; flex-wrap:wrap; justify-content:center;
+    padding:0 .8rem;
+  }
+  .picker button{
+    font:italic .82rem Georgia,serif; color:var(--ink-dim);
+    background:rgba(14,10,7,.6); border:1px solid rgba(185,168,143,.3);
+    border-radius:999px; padding:.32rem .85rem; cursor:pointer;
+    backdrop-filter:blur(3px);
+  }
+  .picker button:hover{color:var(--lamp); border-color:var(--lamp)}
+  .picker button.on{
+    color:var(--room); background:var(--lamp); border-color:var(--lamp);
+    font-style:normal;
+  }
+  .picker button:disabled{opacity:.45; cursor:default}
+
+  .deskline{
+    position:fixed; left:0; right:0; bottom:0; z-index:4;
+    display:flex; flex-direction:column; align-items:center; gap:.5rem;
+    padding:0 1rem calc(1rem + env(safe-area-inset-bottom));
+    pointer-events:none;
+  }
+  #ticker{
+    font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.8rem;
+    color:var(--ink-faint); min-height:1.3rem; display:flex; gap:.55rem;
+    opacity:0; transition:opacity .5s;
+  }
+  #ticker.show{opacity:1}
+  #ticker{cursor:copy}
+  #ticker .now{color:var(--lamp); font-weight:bold}
+  #ticker .done{color:var(--ink-dim)}
+  #ticker .dim{opacity:.5}
+  /* Kociemba's two phases, visible in the notation */
+  #ticker .ph1{border-bottom:1px solid rgba(255,201,122,.5)}
+  #ticker .ph2{border-bottom:1px solid rgba(99,230,169,.6)}
+  #ticker .ph2.now{color:var(--green)}
+  #status{
+    margin:0; font-style:italic; font-size:.92rem; color:var(--ink-dim);
+    text-align:center; min-height:1.4rem;
+  }
+  #fact{
+    margin:0; font-family:ui-monospace,Menlo,Consolas,monospace;
+    font-size:.64rem; letter-spacing:.04em; color:var(--ink-faint);
+    text-align:center; max-width:44rem;
+  }
+  .actions{display:flex; gap:.6rem; pointer-events:auto; margin-top:.2rem;
+           flex-wrap:wrap; justify-content:center}
+  .actions button{
+    font:italic .95rem Georgia,serif; cursor:pointer; border-radius:999px;
+    padding:.5rem 1.35rem; border:1px solid rgba(185,168,143,.4);
+    background:rgba(14,10,7,.65); color:var(--ink); backdrop-filter:blur(3px);
+  }
+  .actions button:hover:not(:disabled){border-color:var(--lamp); color:var(--lamp)}
+  #btnScramble{border-color:rgba(255,201,122,.55)}
+  #btnSolve{border-color:rgba(99,230,169,.55)}
+  #btnSolve:hover:not(:disabled){border-color:var(--green); color:var(--green)}
+  .actions button:disabled{opacity:.4; cursor:default}
+  #btnMaths{font-size:.8rem; padding:.4rem 1rem}
+
+  /* the mathematics, told properly */
+  #maths{
+    position:fixed; inset:0; z-index:6; overflow-y:auto;
+    background:rgba(8,6,4,.94); backdrop-filter:blur(6px);
+    opacity:0; visibility:hidden; transition:opacity .35s, visibility .35s;
+  }
+  #maths.show{opacity:1; visibility:visible}
+  .essay{
+    max-width:42rem; margin:0 auto; padding:5.5rem 1.4rem 6rem;
+  }
+  .essay h2{
+    font-size:1.05rem; font-weight:normal; font-style:italic; color:var(--lamp);
+    margin:2.2rem 0 .5rem;
+  }
+  .essay p{margin:.6rem 0; color:var(--ink-dim); font-size:.95rem}
+  .essay b{color:var(--ink); font-weight:normal}
+  .essay .num{
+    font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.85em;
+    color:var(--ink);
+  }
+  #nogl{
+    position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+    text-align:center; padding:2rem; font-style:italic; color:var(--ink-dim);
+  }
+  #nogl[hidden]{display:none}
+  /* ?og=1 — a bare stage for the social-preview photograph */
+  body.og header, body.og .picker, body.og .deskline{display:none}
+
+  /* ---------- put it in your room ---------- */
+  .ar-video{
+    position:fixed; inset:0; width:100%; height:100%;
+    object-fit:cover; z-index:0;
+  }
+  #stage{z-index:1}
+  body.ar{background:#000}
+  body.ar .glowpool{display:none}
+  body.ar #btnMap, body.ar #btnStats, body.ar #btnScan,
+  body.ar #btnSpecimen, body.ar #btnMaths, body.ar #fact{display:none}
+  body.ar .picker button{background:rgba(8,6,4,.55)}
+  body.ar #status{text-shadow:0 1px 6px rgba(0,0,0,.8)}
+  @media (max-width:640px){
+    h1{font-size:1.1rem}
+    .picker{top:5.4rem}
+    .actions{flex-wrap:wrap; justify-content:center; gap:.4rem}
+    .actions button{padding:.34rem .75rem; font-size:.78rem; white-space:nowrap}
+    #teachBadge b{font-size:1.7rem}
+  }
+</style>
+</head>
+<body>
+
+<div class="glowpool" aria-hidden="true"></div>
+<canvas id="stage" aria-label="A twisty puzzle you can turn, fling, scramble and watch solve itself"></canvas>
+<canvas id="map" aria-label="A map of the puzzle's state space: every dot is a reachable position, and the glowing thread is the walk the cube is taking"></canvas>
+<p id="mapCap" aria-hidden="true"></p>
+<p id="mapLive" aria-live="polite"></p>
+<div id="teachBadge" hidden aria-live="polite"></div>
+<aside id="stats" hidden aria-label="Live statistics of the puzzle's state space">
+  <p class="kicker">the numbers</p>
+  <div id="statBars" aria-hidden="true"></div>
+  <p id="statCap"></p>
+  <div id="statLines" aria-live="polite"></div>
+</aside>
+
+<header>
+  <div>
+    <p class="kicker">kmay89 / puzzles — an honest toy</p>
+    <h1>The solving room</h1>
+  </div>
+  <a class="back" href="../">← the introduction</a>
+</header>
+
+<nav class="picker" aria-label="Choose a puzzle">
+  <button data-kind="cube2">2×2</button>
+  <button data-kind="cube3">3×3</button>
+  <button data-kind="cube4">4×4</button>
+  <button data-kind="cube5">5×5</button>
+  <button data-kind="mega">✦ Megaminx</button>
+</nav>
+
+<div class="deskline">
+  <div id="ticker" aria-hidden="true"></div>
+  <p id="status" aria-live="polite">waking the room…</p>
+  <div class="actions">
+    <button id="btnScramble">Scramble</button>
+    <button id="btnSolve">Solve</button>
+    <button id="btnStop" hidden>Stop</button>
+    <button id="btnMap">the map ✦</button>
+    <button id="btnStats">the numbers ✦</button>
+    <button id="btnScan" hidden>scan your cube ✦</button>
+    <button id="btnSpecimen" hidden>the antipode ✦</button>
+    <button id="btnScore">the score ✦</button>
+    <button id="btnRoom">put it in your room ✦</button>
+    <button id="btnMaths">the mathematics ✦</button>
+  </div>
+  <div id="teachBar" hidden>
+    <button id="teachBack">← back</button>
+    <button id="teachNext">next turn →</button>
+    <button id="teachAgain">again ↺</button>
+    <button id="teachAuto">auto: off</button>
+    <button id="teachExit">stop ×</button>
+  </div>
+  <p id="fact"></p>
+</div>
+
+<section id="score" hidden aria-label="Write a move sequence for the room to perform">
+  <div class="s-inner">
+    <p class="kicker">the score</p>
+    <h1 style="margin:.2rem 0 .8rem">Write it a sequence</h1>
+    <p class="s-text">Any pattern you know, any algorithm you found, anything you
+    want to see the room's hands do — write it in notation and it will be
+    performed with full showmanship, or taught back one turn at a time with
+    the arrows, forwards <i>and</i> backwards.</p>
+    <p class="s-text" id="scoreHint"></p>
+    <textarea id="scoreInput" rows="3" spellcheck="false"
+      placeholder="R U R' U'  …"></textarea>
+    <div id="scoreTokens"></div>
+    <div id="scorePatterns" class="s-row"></div>
+    <div class="s-row">
+      <button class="s-btn" id="scorePerform" disabled>perform it ▶</button>
+      <button class="s-btn" id="scoreStep" disabled>step through ✦</button>
+    </div>
+    <p style="margin-top:1.6rem"><button class="s-btn s-quiet" id="scoreClose">close the score ×</button></p>
+  </div>
+</section>
+
+<div id="arPrompt" hidden>
+  <div class="arp-card">
+    <p class="kicker">put it in your room</p>
+    <p>You came in through the AR door. One tap opens it — your browser will
+    ask for the camera (and on iPhones, motion). Nothing leaves your device.</p>
+    <div class="s-row">
+      <button class="s-btn" id="arPromptGo">step inside ✦</button>
+      <button class="s-btn s-quiet" id="arPromptNo">just the flat screen</button>
+    </div>
+  </div>
+</div>
+
+<section id="scan" hidden aria-label="Scan your real cube">
+  <div class="s-inner">
+    <p class="kicker">the scanning booth</p>
+    <h1 style="margin:.2rem 0 .8rem">Bring your real cube</h1>
+    <div id="scanStage"></div>
+    <p style="margin-top:2rem"><button class="s-btn s-quiet" id="scanClose">put the camera down ×</button></p>
+  </div>
+</section>
+
+<section id="maths" aria-label="The mathematics of the solving room">
+  <div class="essay">
+    <p class="kicker">the mathematics</p>
+
+    <h2>What you are looking at</h2>
+    <p>The program running this page has never been told what a Rubik's cube is.
+    Each puzzle is only a bag of sticker polygons floating in space. To learn what a
+    twist does, the program rotates one slab of stickers — 90° for the cubes,
+    72° for the megaminx — and asks <b>who landed where</b>. The answer is a
+    permutation, and from that moment on the whole puzzle is pure group theory:
+    scrambling is composing permutations, and solving is finding an inverse.</p>
+
+    <h2>The pocket cube — God's algorithm</h2>
+    <p>The 2×2 has exactly <span class="num">3,674,160</span> reachable positions.
+    That is small enough to visit <b>every single one</b>: when you first press
+    solve, a breadth-first search floods out from the solved state and writes down
+    how far away each position is. After that the cube simply walks downhill —
+    every solution shown is <b>provably optimal</b>, and none ever needs more than
+    11 turns, because 11 is the pocket cube's God's number.</p>
+
+    <h2>The 3×3 — Kociemba's two-phase algorithm</h2>
+    <p>The full cube has
+    <span class="num">43,252,003,274,489,856,000</span> positions, which is too
+    many to visit. So the solver does what Herbert Kociemba taught the world in
+    1992: it factors the problem through a subgroup. Phase one uses only the
+    orientations of the pieces and the whereabouts of four middle-slice edges to
+    steer the cube into <span class="num">G1&nbsp;=&nbsp;⟨U,&nbsp;D,&nbsp;R²,&nbsp;L²,&nbsp;F²,&nbsp;B²⟩</span> —
+    a subgroup <span class="num">2,217,093,120</span> times smaller than the whole.
+    Phase two finishes the job without ever breaking orientation again. Pruning
+    tables — little precomputed maps of "you are at least this far from home" —
+    keep the search honest, and the answers land around twenty turns.
+    (Twenty is also the 3×3's God's number, proven in 2010 with about
+    35 CPU-years of computation. This page takes a politer route.)</p>
+
+    <h2>The big cubes and the megaminx — Ariadne's thread</h2>
+    <p>The 4×4 has about <span class="num">7.4&nbsp;×&nbsp;10⁴⁵</span> positions, the 5×5
+    about <span class="num">2.8&nbsp;×&nbsp;10⁷⁴</span>, and the megaminx — the
+    dodecahedron from the photographs that started this room — about
+    <span class="num">1.0&nbsp;×&nbsp;10⁶⁸</span>. Nobody's browser tab holds an optimal
+    solver for those; even their God's numbers are unknown. So these puzzles do
+    what Theseus did: they walk into the labyrinth holding a thread. Every turn of
+    the scramble is remembered, and solving plays the <b>group inverse</b> of that
+    word — simplified where turns cancel — back to the light. It is the one
+    solution guaranteed shorter than the journey in.</p>
+
+    <h2>How to read the map</h2>
+    <p>Press <b>the map ✦</b> and the room unrolls a chart of everywhere the
+    puzzle can be. Every dot is real. For the 2×2 the dots <i>are</i> the
+    positions — shells of radius 1, 2, 3… hold the states exactly that many
+    turns from home, straight out of the God table, and you can watch the
+    solve fall inward one shell per turn, never a wasted move. For the 3×3 the
+    nebula is the solver's phase-one coordinate space — all
+    <span class="num">1,082,565</span> combinations of orientation and slice,
+    shaded by their <i>proven</i> minimum distance from G1 — with the
+    corner-permutation space of G1 as a bright nucleus at the centre. A solve
+    is a comet: it spirals down the nebula, dives into the nucleus, and lands
+    on the green star at the middle, which is home. The big puzzles chart the
+    only thing that can be charted at their size: the thread itself, winding
+    out with the scramble and back with the solve.</p>
+
+    <h2>The numbers</h2>
+    <p>Press <b>the numbers ✦</b> and the room does its statistics in front of
+    you — computed live from the same tables that power the solvers, never
+    quoted from a book. For the 2×2 you get the exact census: how many of the
+    <span class="num">3,674,160</span> positions lie at each distance (one at
+    zero, nine at one, and a great swell around nine turns out), the exact mean
+    distance of a random scramble, and — as the cube moves — where <i>this</i>
+    position sits: "deeper than 97% of all positions" is a sentence the room
+    can prove. The 3×3 shows the same census over the phase-one coordinate
+    space, in proven lower bounds. The big puzzles get the only statistic their
+    size allows, and it's a good one: watch the number of possible move-words,
+    which grows by a fixed factor every turn, race past the number of states
+    the puzzle can actually occupy — the pigeonhole principle, live.</p>
+
+    <h2>Reading the turns</h2>
+    <p>The letters are the cube's old shorthand: <span class="num">U R F D L B</span>
+    are the Up, Right, Front, Down, Left and Back faces, each turned a quarter
+    clockwise <i>as you look at that face</i>. An apostrophe
+    (<span class="num">R'</span>, say "R prime") means counter-clockwise; a 2
+    (<span class="num">R2</span>) means a half turn; on the big cubes
+    <span class="num">2R</span> means the second layer in from the right. The
+    megaminx names its twelve faces A through L, with + and − for fifths of a
+    turn. Watch the ticker while anything plays and the notation teaches
+    itself.</p>
+
+    <h2>The scanning booth</h2>
+    <p>On the 3×3, <b>scan your cube ✦</b> reads a real cube through the
+    camera: six poses, one per face, each pinned down by which centre faces
+    the lens and which centre points up. The centre stickers of your six
+    captures become the six reference colours, every other sticker is matched
+    to its nearest reference, and you can tap any square the light misread.
+    Before teaching, the room checks the laws of the cube — corner twist a
+    multiple of three, edge flips even, permutation parity matched — because
+    a mis-scanned cube is usually an <i>impossible</i> cube, and impossibility
+    is easy to prove. Then Kociemba solves <i>your</i> cube, and the badge
+    walks you through it turn by turn. Camera frames never leave your device.</p>
+
+    <h2>The camera</h2>
+    <p>The puzzle hangs on a spring. Fling it and it keeps its momentum, bleeding
+    speed exponentially the way a damped oscillator does; push it past the poles
+    and a rubber band pulls it back. Leave it alone long enough and it turns
+    slowly by itself, the way anything well-made asks to be looked at.</p>
+
+    <h2>Two positions worth meeting</h2>
+    <p>On the 2×2, <b>the antipode ✦</b> walks you to one of the
+    <span class="num">2,644</span> positions that are a proven maximum of
+    <b>11 turns</b> from home — the far shore of the whole space, chosen at
+    random from the God table and reached by an optimal route. Watch it on the
+    map: the comet flies to the very outermost shell and stops, because there
+    is nowhere farther to go. On the 3×3, <b>the superflip ✦</b> builds the
+    most famous position in cubing — every edge flipped in place, everything
+    else untouched — the first position ever <i>proven</i> to need all 20
+    turns, which is how mathematicians learned God's number is at least 20.
+    During any 3×3 solve, look at the ticker: the underline changes colour
+    where phase one hands over to phase two — the exact turn where the cube
+    enters G1 and the algebra changes gears. Click the ticker to copy the
+    whole move word.</p>
+
+    <h2>For small hands</h2>
+    <p>Teach mode is built for learning with a real cube in your lap: hold it
+    the way you scanned it, and a glowing arrow appears <i>on the face that
+    should turn</i>, sweeping the way your hand should go, before every move.
+    Press <b>again ↺</b> as many times as you like — the room will happily
+    re-turn the same layer until it feels easy. Nothing is timed, nothing is
+    scored, and the cube never gets impatient.</p>
+
+    <h2>Putting it in your room</h2>
+    <p><b>Put it in your room ✦</b> opens whichever doorway your device
+    offers. Where the browser speaks WebXR — Android phones, mostly — you get
+    true augmented reality: the camera looks for a surface, the puzzle rides
+    your aim until you tap to set it down at hand size, and then it simply
+    <i>stays there</i> while you walk around it. On iPhones, Safari keeps real
+    AR to itself, so the room does the honest next-best thing: the rear camera
+    becomes the backdrop, the gyroscope steers the view, and the puzzle hangs
+    pinned in a direction of your room — a window, not a world-lock, and
+    labelled as such. Either way, while it lives in your room it behaves like
+    an ornament that thinks: scramble, solve, breathe, repeat, with the same
+    honest mathematics underneath. No frameworks were harmed: WebXR is just
+    an API, and the window is a video element, a quaternion, and the same
+    renderScene call as the flat screen.</p>
+
+    <h2>The design, if you'd like to steal it</h2>
+    <p>View source — it's meant to be read. The whole room is six colour
+    tokens (a warm dark room, three strengths of parchment ink, lamp-amber
+    for attention and home-green for arrival), two typefaces that ship with
+    every computer (Georgia italic for the voice, the system monospace for
+    the facts), and three rules of motion: snaps land with a little
+    overshoot (easeOutBack), flung things keep momentum that bleeds
+    exponentially, and everything past a limit comes back on a spring.
+    Buttons are pills, panels are frosted cards, numbers glow when they
+    matter, and nothing animates that isn't saying something. The tokens are
+    documented at the top of this page's stylesheet, the architecture in the
+    repo's <span class="num">cube/README.md</span>, and the licence is MIT —
+    take it, retune the six colours, and it becomes yours.</p>
+
+    <h2>The build</h2>
+    <p>No libraries, no frameworks, no model files — raw WebGL and three small
+    JavaScript files. The solver runs in a worker so the room never stutters. The
+    same geometry code that draws the puzzles also <i>discovers</i> their move
+    permutations, and the solvers were verified in a test harness: hundreds of
+    scrambles solved end-to-end before this page was allowed to face you.</p>
+  </div>
+</section>
+
+<p id="nogl" hidden>This room needs WebGL, and your browser is keeping the lights
+off. The introduction is still there, though — <a href="../">go back</a>.</p>
+
+<script src="puzzle.js?v=3"></script>
+<script src="map.js?v=2"></script>
+<script src="ar.js?v=1"></script>
+<script src="app.js?v=6"></script>
+<script src="scan.js?v=2"></script>
+</body>
+</html>
