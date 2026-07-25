@@ -18,6 +18,10 @@ index.html    the introduction — what this is, what group theory is,
               how the solving works, what you get out of it
 room/         the solving room itself (see room/README.md for the
               architecture: engine, solvers, worker, map, scanner, AR)
+chess/        the chess room — chess taught kindly: a full 3D board
+              (2D too), a patient coach, opening stories, a tournament
+              clock, and nearby two-player over WebRTC with no accounts
+              (see chess/README.md)
 og.png        the social preview
 .nojekyll     serve files exactly as they are
 ```
