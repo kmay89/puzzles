@@ -144,6 +144,11 @@
   .abtn.primary{background:var(--amber); border-color:var(--amber); color:#241a08}
   .abtn.primary .ic{color:#241a08}
   .abtn[disabled]{opacity:.35; pointer-events:none}
+  /* the hint's price, worn on the button so it's never a surprise */
+  .hintCost{display:block; font-size:.86em; line-height:1.1; margin-top:1px; font-weight:700}
+  .hintCost.behind{color:var(--good)}
+  .hintCost.level{color:var(--soft)}
+  .hintCost.ahead{color:var(--bad)}
 
   /* ---------- overlays ---------- */
   .ov{
@@ -289,6 +294,112 @@
     .qrStage{gap:8px}
     .handshake{font-size:2.8em}
   }
+
+  /* ---------- the Academy ---------- */
+  .lessonBar{
+    position:absolute; left:50%; transform:translateX(-50%); bottom:10px;
+    width:min(560px, calc(100% - 20px)); z-index:5;
+    background:rgba(24,19,14,.94); border:1px solid var(--line); border-radius:16px;
+    padding:12px 14px; box-shadow:var(--shadow); text-align:left;
+  }
+  .lessonBar .lkick{font-size:.68em; letter-spacing:.16em; text-transform:uppercase; color:var(--amber); font-weight:700}
+  .lessonBar .lask{font-size:1.02em; margin:4px 0 2px}
+  .lessonBar .lsay{font-size:.9em; color:var(--soft); margin-top:6px}
+  .lessonBar .lsay b{color:var(--ink)}
+  .lessonBar .lrow{display:flex; gap:6px; flex-wrap:wrap; margin-top:9px; align-items:center}
+  .lessonBar.good{border-color:var(--good); box-shadow:0 0 0 2px rgba(62,207,142,.25), var(--shadow)}
+  .lessonBar.bad{border-color:var(--bad)}
+  .lchip{
+    padding:6px 12px; border-radius:999px; border:1px solid var(--line);
+    background:var(--card2); font-size:.84em; color:var(--soft);
+  }
+  .lchip.go{background:var(--amber); border-color:var(--amber); color:#241a08; font-weight:700}
+  .lchip:active{transform:scale(.96)}
+  #ovAcademy .card{max-width:600px}
+  .aHead{display:flex; gap:14px; align-items:center; margin-bottom:6px; flex-wrap:wrap}
+  .aStat{background:var(--card2); border:1px solid var(--line); border-radius:12px; padding:7px 12px; text-align:center; min-width:74px}
+  .aStat b{display:block; font-size:1.25em; color:var(--glow)}
+  .aStat span{font-size:.66em; letter-spacing:.1em; text-transform:uppercase; color:var(--soft)}
+  .chapTitle{margin:16px 0 2px; font-weight:700; color:var(--glow)}
+  .chapBlurb{font-size:.84em; color:var(--soft); margin-bottom:6px}
+  .lrow2{
+    display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+    background:var(--card2); border:1px solid var(--line); border-radius:12px;
+    padding:9px 12px; margin:5px 0;
+  }
+  .lrow2:hover{border-color:var(--amber)}
+  .lrow2 .tick{font-size:1.1em; width:1.4em; flex:none; text-align:center}
+  .lrow2 .lt{flex:1; min-width:0}
+  .lrow2 .lt b{display:block; font-size:.96em}
+  .lrow2 .lt small{color:var(--soft)}
+  .mBar{width:56px; height:6px; border-radius:3px; background:var(--line); overflow:hidden; flex:none}
+  .mBar i{display:block; height:100%; background:linear-gradient(90deg,var(--amber),var(--good))}
+  .howBox{background:rgba(143,176,255,.10); border:1px solid rgba(143,176,255,.35);
+    border-radius:12px; padding:10px 12px; font-size:.84em; color:var(--soft); margin:10px 0}
+  .howBox b{color:var(--blue)}
+
+  /* ---------- the Skin Studio (a drawer, not a wall) ---------- */
+  #studio{
+    position:fixed; top:0; right:0; bottom:0; width:min(330px, 92vw); z-index:18;
+    background:rgba(20,16,13,.97); border-left:1px solid var(--line);
+    box-shadow:-12px 0 40px rgba(0,0,0,.45);
+    display:flex; flex-direction:column; transform:translateX(102%);
+    transition:transform .28s cubic-bezier(.2,.9,.3,1.1);
+    padding-top:var(--safe-top); padding-bottom:var(--safe-bot);
+  }
+  #studio.open{transform:translateX(0)}
+  #studio header{
+    display:flex; align-items:center; gap:8px; padding:12px 14px 8px; border-bottom:1px solid var(--line);
+  }
+  #studio header b{flex:1; font-size:1.02em}
+  #studioBody{flex:1; overflow-y:auto; padding:10px 14px 16px}
+  .stSec{margin:12px 0 4px; font-size:.7em; letter-spacing:.14em; text-transform:uppercase; color:var(--amber); font-weight:700}
+  .stRow{display:flex; align-items:center; gap:8px; margin:7px 0; font-size:.88em}
+  .stRow label{flex:1; color:var(--soft)}
+  .stRow input[type=color]{
+    width:44px; height:28px; padding:0; border:1px solid var(--line); border-radius:8px;
+    background:none; cursor:pointer;
+  }
+  .stRow input[type=range]{flex:1.2; accent-color:var(--amber)}
+  .stGrid{display:flex; flex-wrap:wrap; gap:6px; margin:6px 0}
+  .stPick{
+    padding:5px 10px; border-radius:999px; border:1px solid var(--line);
+    background:var(--card2); font-size:.78em; color:var(--soft);
+  }
+  .stPick.sel{background:var(--amber); border-color:var(--amber); color:#241a08; font-weight:700}
+  .preset{
+    display:flex; align-items:center; gap:9px; width:100%; text-align:left; margin:5px 0;
+    background:var(--card2); border:1px solid var(--line); border-radius:12px; padding:7px 9px;
+  }
+  .preset:hover{border-color:var(--amber)}
+  .preset.sel{border-color:var(--amber); box-shadow:0 0 0 1px var(--amber)}
+  .swatch{width:38px; height:26px; border-radius:6px; flex:none; overflow:hidden; display:grid;
+    grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; border:1px solid rgba(0,0,0,.4)}
+  .swatch i{display:block}
+  .preset .pt{flex:1; min-width:0}
+  .preset .pt b{display:block; font-size:.86em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .preset .pt small{color:var(--soft); font-size:.72em; display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  #studio textarea{
+    width:100%; min-height:56px; background:#171310; color:var(--ink); border:1px solid var(--line);
+    border-radius:10px; padding:7px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.7em;
+    resize:vertical; user-select:text; -webkit-user-select:text;
+  }
+  /* the board makes room rather than hiding underneath: the drawer takes
+     a slice of the stage, and the lesson bar lifts the board above it */
+  body.studio-on #wrap{padding-right:min(330px, 92vw)}
+  /* while you're skinning, the board matters more than the move list */
+  body.studio-on #panel{display:none}
+  body.lesson-on canvas.board{height:calc(100% - 176px)}
+  @media (max-width:760px){
+    #studio{
+      top:auto; left:0; width:auto; max-height:52vh; border-left:none; border-top:1px solid var(--line);
+      border-radius:18px 18px 0 0; transform:translateY(104%);
+    }
+    #studio.open{transform:translateY(0)}
+    body.studio-on #wrap{padding-right:0}
+    body.studio-on canvas.board{height:calc(100% - 52vh)}
+    body.lesson-on canvas.board{height:calc(100% - 158px)}
+  }
   .settingRow{display:flex; align-items:center; justify-content:space-between; gap:10px;
     padding:9px 0; border-bottom:1px solid var(--line)}
   .settingRow:last-child{border-bottom:none}
@@ -346,6 +457,7 @@
         <div class="clock off" id="clockBot">5:00</div>
       </div>
       <div id="toast"></div>
+      <div class="lessonBar hide" id="lessonBar"></div>
     </div>
     <div id="panel">
       <div id="openingCard" class="hide"></div>
@@ -356,10 +468,11 @@
   <div id="actions">
     <button class="abtn" id="btnMenu"><span class="ic">☰</span>Menu</button>
     <button class="abtn" id="btnUndo"><span class="ic">↩</span><span id="undoLbl">Undo</span></button>
-    <button class="abtn" id="btnHint"><span class="ic">💡</span>Hint</button>
+    <button class="abtn" id="btnHint"><span class="ic">💡</span>Hint<span class="hintCost" id="hintCost"></span></button>
     <button class="abtn" id="btnReplay"><span class="ic">🔁</span>Last move</button>
     <button class="abtn" id="btnFlip"><span class="ic">⇅</span>Flip</button>
     <button class="abtn" id="btnDim"><span class="ic" id="dimIc">③</span><span id="dimLbl">3D</span></button>
+    <button class="abtn" id="btnStudio"><span class="ic">🎨</span>Look</button>
   </div>
 </div>
 
@@ -377,6 +490,7 @@
     <button class="bigbtn" id="mCoach"><span class="em">🌱</span><span><b>Play the coach</b><small>A patient opponent who explains, hints, and never gloats.</small></span></button>
     <button class="bigbtn" id="mLan"><span class="em">📡</span><span><b>Play nearby</b><small>Two devices, same room. A code links them — no accounts, no server.</small></span></button>
     <button class="bigbtn" id="mOpenings"><span class="em">📖</span><span><b>Opening stories</b><small>Watch the famous openings play themselves, told plainly.</small></span></button>
+    <button class="bigbtn" id="mAcademy"><span class="em">🎓</span><span><b>The Academy</b><small id="mAcademySub">Learn by doing — short positions, real feedback.</small></span></button>
     <button class="bigbtn" id="mLearn"><span class="em">🐣</span><span><b>Completely new?</b><small>The rules in five gentle minutes.</small></span></button>
     <button class="ghostbtn" id="mSettings">Settings</button>
     <button class="ghostbtn" id="mAbout">About this room</button>
@@ -445,7 +559,7 @@
       <div class="rail" id="linkRail">
         <span class="railStep on" id="rail1"><i></i>Show</span>
         <span class="railLine"></span>
-        <span class="railStep" id="rail2"><i></i>Scan back</span>
+        <span class="railStep" id="rail2"><i></i>Swap back</span>
         <span class="railLine"></span>
         <span class="railStep" id="rail3"><i></i>Play</span>
       </div>
@@ -473,7 +587,7 @@
         <button class="chip" id="linkCam">📷 Camera</button>
       </div>
       <details class="codeDrop" id="codeDrop">
-        <summary>Type or copy the code by hand</summary>
+        <summary id="codeDropLabel">Type or copy the code by hand</summary>
         <textarea class="code" id="linkCodeOut" readonly aria-label="Your code"></textarea>
         <button class="chip" id="linkCopy">📋 Copy my code</button>
         <textarea class="code" id="linkCodeIn" placeholder="Paste their CHESS2.… code here" aria-label="Their code"></textarea>
@@ -511,7 +625,10 @@
     <div style="font-size:3em" id="endEmoji">🏁</div>
     <h2 id="endTitle">Game over</h2>
     <p id="endSub"></p>
+    <p id="endLesson" class="hide" style="background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;text-align:left;font-size:.92em"></p>
     <button class="bigbtn" id="endRematch"><span class="em">🔄</span><span><b>Rematch</b><small id="endRematchSub">Same setup, colours swapped.</small></span></button>
+    <p id="endReview2" class="hide" style="background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;text-align:left;font-size:.88em;color:var(--soft)"></p>
+    <button class="bigbtn hide" id="endPractise"><span class="em">🎓</span><span><b>Practise what this game showed you</b><small id="endPractiseSub"></small></span></button>
     <button class="bigbtn" id="endReview"><span class="em">🔍</span><span><b>Look back at the game</b><small>Step through the moves on the board.</small></span></button>
     <button class="ghostbtn" id="endMenu">Back to the menu</button>
   </div>
@@ -521,8 +638,8 @@
 <div class="ov hide" id="ovSettings">
   <div class="card">
     <h2>Settings</h2>
-    <div class="settingRow"><span class="lbl"><b>Board style</b><small>Warm walnut or cool slate.</small></span>
-      <div class="rowbtns" style="margin:0"><button class="chip sel" id="thWalnut">Walnut</button><button class="chip" id="thSlate">Slate</button></div></div>
+    <div class="settingRow"><span class="lbl"><b>The look</b><small id="setSkinName">Colours, material, board pattern — change them while you play.</small></span>
+      <button class="chip sel" id="setOpenStudio">🎨 Open the Studio</button></div>
     <div class="settingRow"><span class="lbl"><b>Gentle coach</b><small>A quiet word when a move might lose material — with an offer to take it back.</small></span>
       <button class="chip sel" id="setCoach">On</button></div>
     <div class="settingRow"><span class="lbl"><b>Sound</b><small>Soft clicks and chimes, made in the browser.</small></span>
@@ -582,7 +699,80 @@
   </div>
 </div>
 
+<!-- ===== the Academy ===== -->
+<div class="ov hide" id="ovAcademy">
+  <div class="card">
+    <h2>🎓 The Academy</h2>
+    <div class="aHead">
+      <div class="aStat"><b id="aSolved">0</b><span>Learned</span></div>
+      <div class="aStat"><b id="aDue">0</b><span>Due</span></div>
+      <div class="aStat"><b id="aStreak">0</b><span>Day streak</span></div>
+    </div>
+    <button class="bigbtn" id="aPractise"><span class="em">🔁</span><span><b>Practise what's due</b><small id="aPractiseSub">Spaced review — the bit that makes it stick.</small></span></button>
+    <button class="bigbtn" id="aNext"><span class="em">▶️</span><span><b>Next lesson</b><small id="aNextSub">Continue the path.</small></span></button>
+    <div class="howBox">
+      <b>Why it's built this way.</b> You always play the move yourself (retrieval beats recognition), a new idea is shown once then handed straight back to you, wrong answers are answered with what your move actually allows, and everything returns days later at growing gaps so it's rebuilt from memory rather than re-read.
+    </div>
+    <div id="academyList"></div>
+    <button class="ghostbtn" id="academyBack">Back</button>
+  </div>
+</div>
+
+<!-- ===== the Skin Studio: a drawer you can open mid-game ===== -->
+<aside id="studio" aria-label="Skin studio" aria-hidden="true">
+  <header>
+    <b>🎨 The look</b>
+    <button class="lchip" id="stRandom" title="Surprise me">🎲</button>
+    <button class="lchip" id="stClose">Done</button>
+  </header>
+  <div id="studioBody">
+    <div class="stSec">Gallery</div>
+    <div id="stPresets"></div>
+
+    <div class="stSec">Board</div>
+    <div class="stRow"><label for="cLight">Light squares</label><input type="color" id="cLight"></div>
+    <div class="stRow"><label for="cDark">Dark squares</label><input type="color" id="cDark"></div>
+    <div class="stRow"><label for="cEdge">Frame</label><input type="color" id="cEdge"></div>
+    <div class="stRow"><label for="cRim">Edge trim</label><input type="color" id="cRim"></div>
+    <div class="stGrid" id="stPatterns"></div>
+    <div class="stRow"><label for="sGrain">Texture</label><input type="range" id="sGrain" min="0" max="100"></div>
+    <div class="stRow"><label for="sGloss">Polish</label><input type="range" id="sGloss" min="0" max="100"></div>
+
+    <div class="stSec">Pieces</div>
+    <div class="stRow"><label for="cWhite">Light pieces</label><input type="color" id="cWhite"></div>
+    <div class="stRow"><label for="cBlack">Dark pieces</label><input type="color" id="cBlack"></div>
+    <div class="stGrid" id="stMaterials"></div>
+    <div id="stMatNote" style="font-size:.76em;color:var(--soft);margin:2px 0 6px"></div>
+    <div class="stRow"><label for="sShine">Shine</label><input type="range" id="sShine" min="0" max="100"></div>
+    <div class="stRow"><label for="sRim">Edge light</label><input type="range" id="sRim" min="0" max="100"></div>
+
+    <div class="stSec">Room &amp; markings</div>
+    <div class="stRow"><label for="cBg">Background</label><input type="color" id="cBg"></div>
+    <div class="stRow"><label for="cSelect">Picked-up piece</label><input type="color" id="cSelect"></div>
+    <div class="stRow"><label for="cLegal">Move dots</label><input type="color" id="cLegal"></div>
+    <div class="stRow"><label for="cCapture">Capture rings</label><input type="color" id="cCapture"></div>
+    <div class="stRow"><label for="cLast">Last move</label><input type="color" id="cLast"></div>
+    <div class="stRow"><label for="cCheck">Check glow</label><input type="color" id="cCheck"></div>
+    <div class="stRow"><label for="cHint">Hint arrow</label><input type="color" id="cHint"></div>
+
+    <div class="stSec">Share it</div>
+    <div class="stGrid">
+      <button class="stPick" id="stSave">💾 Save to gallery</button>
+      <button class="stPick" id="stExport">📤 Export</button>
+      <button class="stPick" id="stImport">📥 Import</button>
+    </div>
+    <textarea id="stCode" placeholder="Paste a SKIN1.… code here, or tap Export to make one." spellcheck="false"></textarea>
+    <div style="font-size:.74em;color:var(--soft);margin-top:6px">
+      Anything you make can be sent to a friend as a code or a link — and codes they send you land in your gallery.
+    </div>
+  </div>
+</aside>
+
 <script src="engine.js"></script>
+<script src="teach.js"></script>
+<script src="learn.js"></script>
+<script src="skins.js"></script>
+<script src="lines.js"></script>
 <script src="book.js"></script>
 <script src="eco.js"></script>
 <script src="gfx2d.js"></script>

@@ -8,18 +8,52 @@
 (function (root) {
 "use strict";
 
-var THEMES = {
-  walnut: { light: "#ecdcc0", dark: "#a97d55", rim: "#54382a", margin: "#f5ead6",
-            coord: "#8a6a50", selected: "rgba(246,196,80,.55)", lastA: "rgba(244,214,120,.50)",
-            lastB: "rgba(244,214,120,.38)", dot: "rgba(60,90,60,.38)", ring: "rgba(180,60,50,.55)",
-            check: "rgba(220,60,50,.55)", hint: "#2b8a5c", wFill: "#f7f1e3", wLine: "#57432f",
-            bFill: "#3a3733", bLine: "#141210", shadow: "rgba(30,20,10,.25)" },
-  slate:  { light: "#dde3ea", dark: "#7b8da4", rim: "#2b323c", margin: "#e8ecf1",
-            coord: "#5d6a7a", selected: "rgba(90,162,255,.5)", lastA: "rgba(120,180,255,.45)",
-            lastB: "rgba(120,180,255,.32)", dot: "rgba(43,95,217,.35)", ring: "rgba(200,70,60,.55)",
-            check: "rgba(220,60,50,.55)", hint: "#2b5fd9", wFill: "#f4f6f8", wLine: "#3a4350",
-            bFill: "#343a44", bLine: "#10141a", shadow: "rgba(10,20,35,.25)" }
-};
+/* ---------- a skin, turned into the strings canvas wants ----------
+   Everything drawn here comes from the live skin object (see skins.js),
+   so a slider moved in the Studio shows up on the very next frame. */
+function rgbOf(hex) {
+  var n = parseInt(hex.slice(1), 16);
+  return [n >> 16, (n >> 8) & 255, n & 255];
+}
+function rgba(hex, a) {
+  var c = rgbOf(hex);
+  return "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + a + ")";
+}
+/* f > 0 lightens toward white, f < 0 darkens toward black */
+function shade(hex, f) {
+  var c = rgbOf(hex);
+  var ch = function (v) {
+    var out = f > 0 ? v + (255 - v) * f : v * (1 + f);
+    return Math.round(Math.max(0, Math.min(255, out)));
+  };
+  return "rgb(" + ch(c[0]) + "," + ch(c[1]) + "," + ch(c[2]) + ")";
+}
+function luma(hex) {
+  var c = rgbOf(hex);
+  return (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255;
+}
+
+function derive(skin) {
+  var b = skin.board, p = skin.pieces, m = skin.marks;
+  var surf = (root.Skins && root.Skins.surface) ? root.Skins.surface(skin)
+           : { spec: 0.5, alpha: 1, rim: 0.3 };
+  /* outlines are drawn from the piece's own colour so any palette holds
+     together — a light piece gets a dark line, a dark piece a darker one */
+  return {
+    light: b.light, dark: b.dark, rim: b.rim, margin: b.edge, coord: b.coord,
+    pattern: b.pattern, grain: b.grain, gloss: b.gloss,
+    selected: rgba(m.select, 0.55),
+    lastA: rgba(m.last, 0.50), lastB: rgba(m.last, 0.36),
+    dot: rgba(m.legal, 0.48), ring: rgba(m.capture, 0.66),
+    checkCore: rgba(m.check, 0.58), checkEdge: rgba(m.check, 0),
+    hint: m.hint,
+    wFill: p.white, wLine: shade(p.white, luma(p.white) > 0.5 ? -0.68 : -0.35),
+    bFill: p.black, bLine: shade(p.black, luma(p.black) > 0.5 ? -0.7 : -0.55),
+    wEdge: shade(p.white, 0.55), bEdge: shade(p.black, 0.5),
+    shadow: rgba(b.rim, 0.30),
+    sheen: Math.min(1, surf.spec * 0.7), alpha: surf.alpha, rimLight: surf.rim
+  };
+}
 
 function ease(t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
 
@@ -131,33 +165,56 @@ function drawKing(ctx) {
 }
 var PAINTERS = [null, drawPawn, drawKnight, drawBishop, drawRook, drawQueen, drawKing];
 
-function paintPiece(ctx, piece, x, y, size, th, alpha, scale) {
+function paintPiece(ctx, piece, x, y, size, pal, alpha, scale) {
   var kind = Math.abs(piece), white = piece > 0;
   ctx.save();
   ctx.translate(x, y + size * 0.38);
   var s = size * 0.92 * (scale || 1);
   ctx.scale(s, s);
-  ctx.globalAlpha = alpha == null ? 1 : alpha;
+  var baseAlpha = (alpha == null ? 1 : alpha);
+  ctx.globalAlpha = baseAlpha;
   /* soft ground shadow */
   ctx.beginPath();
   ctx.ellipse(0, -0.02, 0.30, 0.075, 0, 0, Math.PI * 2);
-  ctx.fillStyle = th.shadow;
+  ctx.fillStyle = pal.shadow;
   ctx.fill();
+
+  /* the body — translucent materials (glass) let the board through */
+  ctx.globalAlpha = baseAlpha * pal.alpha;
   ctx.beginPath();
   PAINTERS[kind](ctx);
-  ctx.fillStyle = white ? th.wFill : th.bFill;
-  ctx.strokeStyle = white ? th.wLine : th.bLine;
+  ctx.fillStyle = white ? pal.wFill : pal.bFill;
+  ctx.strokeStyle = white ? pal.wLine : pal.bLine;
   ctx.lineWidth = 0.035;
   ctx.lineJoin = "round";
   ctx.fill();
   ctx.stroke();
-  /* a small warm highlight so black pieces read on dark squares */
-  if (!white) {
+  ctx.globalAlpha = baseAlpha;
+
+  /* material: a shine down the left shoulder, scaled by the skin. This
+     is what makes ink look like paper and metal look like metal. */
+  if (pal.sheen > 0.02) {
+    ctx.save();
     ctx.beginPath();
     PAINTERS[kind](ctx);
-    ctx.strokeStyle = "rgba(255,255,255,.18)";
-    ctx.lineWidth = 0.012;
+    ctx.clip();
+    var g = ctx.createLinearGradient(-0.3, -0.9, 0.25, 0.0);
+    g.addColorStop(0, "rgba(255,255,255," + (0.55 * pal.sheen).toFixed(3) + ")");
+    g.addColorStop(0.45, "rgba(255,255,255," + (0.12 * pal.sheen).toFixed(3) + ")");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(-0.5, -1.05, 1, 1.1);
+    ctx.restore();
+  }
+  /* rim light, so a dark piece still reads against a dark square */
+  if (pal.rimLight > 0.02) {
+    ctx.beginPath();
+    PAINTERS[kind](ctx);
+    ctx.strokeStyle = (white ? pal.wEdge : pal.bEdge);
+    ctx.globalAlpha = baseAlpha * Math.min(0.6, pal.rimLight * 0.55);
+    ctx.lineWidth = 0.016;
     ctx.stroke();
+    ctx.globalAlpha = baseAlpha;
   }
   ctx.restore();
 }
@@ -167,11 +224,11 @@ function create(canvas) {
   var ctx = canvas.getContext("2d");
   var R = {
     kind: "2d",
-    theme: THEMES.walnut,
-    themeName: "walnut",
+    skin: null, pal: null,
     orientation: 1,             /* 1 = white at the bottom */
     board: new Int8Array(128),
     hi: { selected: -1, legal: [], legalCapt: [], last: null, check: -1, hint: null },
+    lines: [], net: [],
     anim: null,                 /* the move in flight */
     size: 0, cell: 0, ox: 0, oy: 0, dirty: true
   };
@@ -206,10 +263,140 @@ function create(canvas) {
     R.size = R.cell * 8;
     R.ox = Math.round((w - R.size) / 2);
     R.oy = Math.round((h - R.size) / 2);
+    boardKey = "";                       /* the cached board is now the wrong size */
     R.dirty = true;
   };
 
-  R.setTheme = function (name) { R.themeName = THEMES[name] ? name : "walnut"; R.theme = THEMES[R.themeName]; R.dirty = true; };
+  /* ---------- the board, painted once and reused ----------
+     Grain, veins and inlay lines are a lot of little strokes; doing them
+     every frame would tax a phone for no reason, so the whole board
+     (margin, squares, texture, coordinates) is rendered to an offscreen
+     canvas and blitted. It rebuilds only when the skin, the size or the
+     orientation actually changes — which is what keeps the Studio's
+     sliders feeling instant even mid-animation. */
+  var boardCv = document.createElement("canvas");
+  var boardCtx = boardCv.getContext("2d");
+  var boardKey = "", boardPad = 0;
+
+  function paintPattern(g, x, y, cell, dark, pal, f, r) {
+    var amt = pal.grain;
+    if (amt <= 0.02 || pal.pattern === "plain") return;
+    g.save();
+    g.beginPath(); g.rect(x, y, cell, cell); g.clip();
+    var seed = (f * 73 + r * 131) % 97;
+    if (pal.pattern === "wood") {
+      g.globalAlpha = 0.06 + amt * 0.16;
+      for (var i = 0; i < 5; i++) {
+        var yy = y + ((seed * 7 + i * 23) % cell);
+        g.strokeStyle = (i % 2) ? "#000" : "#fff";
+        g.globalAlpha = (0.03 + amt * 0.10) * (i % 2 ? 1 : 0.7);
+        g.lineWidth = 1 + (i % 2);
+        g.beginPath();
+        g.moveTo(x, yy);
+        g.bezierCurveTo(x + cell * 0.3, yy + 2, x + cell * 0.7, yy - 2, x + cell, yy + 1);
+        g.stroke();
+      }
+    } else if (pal.pattern === "marble") {
+      g.globalAlpha = 0.05 + amt * 0.14;
+      g.strokeStyle = dark ? "#fff" : "#000";
+      g.lineWidth = Math.max(1, cell * 0.02);
+      for (var v = 0; v < 3; v++) {
+        var sx = x + ((seed * 11 + v * 37) % cell), sy = y;
+        g.beginPath();
+        g.moveTo(sx, sy);
+        g.bezierCurveTo(sx + cell * 0.35, sy + cell * 0.3, sx - cell * 0.3, sy + cell * 0.65, sx + cell * 0.2, sy + cell);
+        g.stroke();
+      }
+    } else if (pal.pattern === "linen") {
+      g.globalAlpha = 0.04 + amt * 0.10;
+      g.strokeStyle = dark ? "#fff" : "#000";
+      g.lineWidth = 1;
+      var step = Math.max(3, cell / 7);
+      for (var t = 0; t < cell; t += step) {
+        g.beginPath(); g.moveTo(x, y + t); g.lineTo(x + cell, y + t); g.stroke();
+        g.beginPath(); g.moveTo(x + t, y); g.lineTo(x + t, y + cell); g.stroke();
+      }
+    } else if (pal.pattern === "inlay") {
+      g.globalAlpha = 0.25 + amt * 0.55;
+      g.strokeStyle = dark ? "#fff" : "#000";
+      g.lineWidth = Math.max(1, cell * 0.03);
+      g.strokeRect(x + cell * 0.08, y + cell * 0.08, cell * 0.84, cell * 0.84);
+    }
+    g.restore();
+  }
+
+  function buildBoard() {
+    var pal = R.pal, dpr = Math.min(2.5, window.devicePixelRatio || 1);
+    var pad = Math.round(R.cell * 0.30);
+    var W = R.size + pad * 2, H = W;
+    boardPad = pad;
+    boardCv.width = Math.round(W * dpr);
+    boardCv.height = Math.round(H * dpr);
+    var g = boardCtx;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, W, H);
+
+    /* the frame the board sits in */
+    g.fillStyle = pal.margin;
+    rr(g, 0, 0, W, H, R.cell * 0.28);
+    g.fill();
+    g.strokeStyle = pal.rim;
+    g.lineWidth = Math.max(2, R.cell * 0.07);
+    rr(g, pad * 0.45, pad * 0.45, W - pad * 0.9, H - pad * 0.9, R.cell * 0.2);
+    g.stroke();
+
+    /* the sixty-four */
+    for (var r = 0; r < 8; r++) {
+      for (var f = 0; f < 8; f++) {
+        var vf = R.orientation === 1 ? f : 7 - f;
+        var vr = R.orientation === 1 ? 7 - r : r;
+        var dark = ((vf + vr) % 2) === 0;
+        var x = pad + f * R.cell, y = pad + r * R.cell;
+        g.fillStyle = dark ? pal.dark : pal.light;
+        g.fillRect(x, y, R.cell + 0.5, R.cell + 0.5);
+        paintPattern(g, x, y, R.cell, dark, pal, vf, vr);
+      }
+    }
+
+    /* gloss: one soft sweep of light across the whole surface */
+    if (pal.gloss > 0.02) {
+      var gl = g.createLinearGradient(pad, pad, pad + R.size, pad + R.size);
+      gl.addColorStop(0, "rgba(255,255,255," + (0.22 * pal.gloss).toFixed(3) + ")");
+      gl.addColorStop(0.45, "rgba(255,255,255,0)");
+      gl.addColorStop(0.75, "rgba(0,0,0,0)");
+      gl.addColorStop(1, "rgba(0,0,0," + (0.16 * pal.gloss).toFixed(3) + ")");
+      g.fillStyle = gl;
+      g.fillRect(pad, pad, R.size, R.size);
+    }
+
+    /* coordinates, in the margin where they belong */
+    g.fillStyle = pal.coord;
+    g.font = "600 " + Math.max(9, R.cell * 0.22) + "px system-ui, sans-serif";
+    g.textAlign = "center"; g.textBaseline = "middle";
+    for (var i = 0; i < 8; i++) {
+      var fileCh = "abcdefgh"[R.orientation === 1 ? i : 7 - i];
+      var rankCh = R.orientation === 1 ? 8 - i : i + 1;
+      g.fillText(fileCh, pad + (i + 0.5) * R.cell, pad + R.size + pad * 0.52);
+      g.fillText(String(rankCh), pad * 0.48, pad + (i + 0.5) * R.cell);
+    }
+    boardKey = key();
+  }
+  function key() {
+    return [R.size, R.orientation, R.pal && JSON.stringify(R.skin.board),
+            Math.min(2.5, window.devicePixelRatio || 1)].join("|");
+  }
+
+  /* the racing lines: a small list of {from,to,kind}. They animate, so
+     while any exist the renderer keeps asking for frames. */
+  R.setLines = function (list) { R.lines = list || []; R.dirty = true; };
+  R.setNet = function (squares) { R.net = squares || []; R.dirty = true; };
+
+  R.setSkin = function (skin) {
+    R.skin = skin;
+    R.pal = derive(skin);
+    boardKey = "";
+    R.dirty = true;
+  };
   R.setOrientation = function (color) { R.orientation = color; R.dirty = true; };
   R.setPosition = function (board) { R.board.set(board); R.anim = null; R.dirty = true; };
   R.setHighlights = function (hi) {
@@ -258,37 +445,16 @@ function create(canvas) {
 
   /* one full paint; returns true if another frame is wanted */
   R.frame = function () {
-    var th = R.theme, animating = false;
+    var th = R.pal, animating = false;
+    if (!th) return false;
     if (!R.dirty && !R.anim) return false;
     var w = canvas.clientWidth, h = canvas.clientHeight;
     ctx.clearRect(0, 0, w, h);
 
-    /* margin + rim */
-    ctx.fillStyle = th.margin;
-    var pad = R.cell * 0.30;
-    rr(ctx, R.ox - pad, R.oy - pad, R.size + pad * 2, R.size + pad * 2, R.cell * 0.28);
-    ctx.fill();
-    ctx.strokeStyle = th.rim; ctx.lineWidth = Math.max(2, R.cell * 0.07);
-    rr(ctx, R.ox - pad * 0.55, R.oy - pad * 0.55, R.size + pad * 1.1, R.size + pad * 1.1, R.cell * 0.2);
-    ctx.stroke();
-
-    /* squares */
-    for (var r = 0; r < 8; r++) for (var f = 0; f < 8; f++) {
-      var sq = r * 16 + f, p = sqXY(sq);
-      ctx.fillStyle = ((f + r) % 2 === 0) ? th.dark : th.light;
-      ctx.fillRect(p.x - R.cell / 2, p.y - R.cell / 2, R.cell + 0.5, R.cell + 0.5);
-    }
-
-    /* coordinates */
-    ctx.fillStyle = th.coord;
-    ctx.font = "600 " + Math.max(9, R.cell * 0.22) + "px system-ui, sans-serif";
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    for (var i = 0; i < 8; i++) {
-      var fileCh = "abcdefgh"[R.orientation === 1 ? i : 7 - i];
-      var rankCh = R.orientation === 1 ? 8 - i : i + 1;
-      ctx.fillText(fileCh, R.ox + (i + 0.5) * R.cell, R.oy + R.size + pad * 0.52);
-      ctx.fillText(String(rankCh), R.ox - pad * 0.52, R.oy + (i + 0.5) * R.cell);
-    }
+    /* the board itself, straight off the cache */
+    if (boardKey !== key()) buildBoard();
+    var pad = boardPad;
+    ctx.drawImage(boardCv, R.ox - pad, R.oy - pad, R.size + pad * 2, R.size + pad * 2);
 
     /* square highlights (under the pieces) */
     if (R.hi.last) {
@@ -299,7 +465,7 @@ function create(canvas) {
     if (R.hi.check >= 0) {
       var c = sqXY(R.hi.check);
       var gr = ctx.createRadialGradient(c.x, c.y, R.cell * 0.1, c.x, c.y, R.cell * 0.62);
-      gr.addColorStop(0, th.check); gr.addColorStop(1, "rgba(220,60,50,0)");
+      gr.addColorStop(0, th.checkCore); gr.addColorStop(1, th.checkEdge);
       ctx.fillStyle = gr;
       ctx.fillRect(c.x - R.cell / 2, c.y - R.cell / 2, R.cell, R.cell);
     }
@@ -364,11 +530,76 @@ function create(canvas) {
       ctx.beginPath(); ctx.arc(cp.x, cp.y, R.cell * 0.42, 0, Math.PI * 2); ctx.stroke();
     }
 
-    if (R.hi.hint) arrow(R.hi.hint[0], R.hi.hint[1], th.hint, 0.8);
+    /* the mate net: squares the king cannot use, marked rather than drawn
+       as a curve — a net is a place, not a direction */
+    if (R.net.length) {
+      ctx.save();
+      ctx.strokeStyle = th.ring;
+      ctx.lineWidth = Math.max(1.5, R.cell * 0.045);
+      ctx.globalAlpha = 0.5;
+      for (var ni = 0; ni < R.net.length; ni++) {
+        var np = sqXY(R.net[ni]), q = R.cell * 0.19;
+        ctx.beginPath();
+        ctx.moveTo(np.x - q, np.y - q); ctx.lineTo(np.x + q, np.y + q);
+        ctx.moveTo(np.x + q, np.y - q); ctx.lineTo(np.x - q, np.y + q);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    /* the lines themselves */
+    if (R.lines.length && root.Lines) {
+      var now = performance.now();
+      for (var li2 = 0; li2 < R.lines.length; li2++) {
+        drawLine(R.lines[li2], now, th);
+      }
+      animating = true;                 /* keep the spark moving */
+    }
+    if (R.hi.hint && !R.lines.length) arrow(R.hi.hint[0], R.hi.hint[1], th.hint, 0.8);
 
     R.dirty = animating;
     return animating;
   };
+
+  /* one racing line: a tapered ribbon, an arrowhead, and a spark that
+     travels it so the eye is pulled the way the idea moves */
+  function drawLine(spec, now, th) {
+    var a = sqXY(spec.from), b = sqXY(spec.to);
+    var colour = spec.colour ||
+      (spec.kind === "threat" ? th.ring : spec.kind === "lane" ? th.lastA : th.hint);
+    var L = root.Lines.build(a, b, {
+      kind: spec.kind, scale: R.cell, knight: spec.knight, alpha: spec.alpha
+    });
+    ctx.save();
+    ctx.globalAlpha = L.alpha;
+    ctx.fillStyle = colour;
+    ctx.shadowColor = colour;
+    ctx.shadowBlur = R.cell * 0.35 * L.glow;
+    ctx.beginPath();
+    ctx.moveTo(L.poly[0].x, L.poly[0].y);
+    for (var i = 1; i < L.poly.length; i++) ctx.lineTo(L.poly[i].x, L.poly[i].y);
+    ctx.closePath();
+    ctx.fill();
+    if (L.head) {
+      ctx.beginPath();
+      ctx.moveTo(L.head[0].x, L.head[0].y);
+      ctx.lineTo(L.head[1].x, L.head[1].y);
+      ctx.lineTo(L.head[2].x, L.head[2].y);
+      ctx.closePath();
+      ctx.fill();
+    }
+    var sp = root.Lines.sparkAt(L.pts, root.Lines.phase(L, now));
+    var gr = ctx.createRadialGradient(sp.x, sp.y, 0, sp.x, sp.y, R.cell * 0.26);
+    gr.addColorStop(0, "rgba(255,255,255,.95)");
+    gr.addColorStop(0.45, colour);
+    gr.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.globalAlpha = 0.9 * L.alpha;
+    ctx.fillStyle = gr;
+    ctx.beginPath();
+    ctx.arc(sp.x, sp.y, R.cell * 0.26, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
 
   function fillSq(sq, color, th) {
     var p = sqXY(sq);
@@ -391,7 +622,7 @@ function create(canvas) {
   return R;
 }
 
-var Gfx2D = { create: create, THEMES: THEMES, paintPiece: paintPiece, PAINTERS: PAINTERS };
+var Gfx2D = { create: create, derive: derive, paintPiece: paintPiece, PAINTERS: PAINTERS };
 if (typeof module !== "undefined" && module.exports) module.exports = Gfx2D;
 else root.Gfx2D = Gfx2D;
 })(typeof self !== "undefined" ? self : this);

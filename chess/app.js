@@ -5,7 +5,7 @@
    engine.js; the boards live in gfx2d.js / gfx3d.js; the nearby link
    lives in net.js; the openings live in book.js. This file only
    conducts. */
-/* global Chess, Book, Eco, Gfx2D, Gfx3D, Net */
+/* global Chess, Book, Eco, Teach, Learn, Skins, Gfx2D, Gfx3D, Net */
 (function () {
 "use strict";
 
@@ -33,7 +33,7 @@ function lsDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
 var PREF_KEY = "chessroom_prefs", SAVE_KEY = "chessroom_save";
 
 /* ===== preferences ===== */
-var prefs = { theme: "walnut", use3d: true, sound: true, coach: true, helpers: true, clockSkin: "simple", name: "" };
+var prefs = { skin: null, use3d: true, sound: true, coach: true, helpers: true, clockSkin: "simple", name: "" };
 (function () {
   try {
     var p = JSON.parse(lsGet(PREF_KEY) || "{}");
@@ -42,6 +42,26 @@ var prefs = { theme: "walnut", use3d: true, sound: true, coach: true, helpers: t
   if (location.hash === "#force2d") { prefs.use3d = false; }
 })();
 function savePrefs() { lsSet(PREF_KEY, JSON.stringify(prefs)); }
+
+/* ===== the look =====
+   One skin object drives both renderers and the page chrome. Changing
+   it is instant and allowed at any time — including mid-game, which is
+   the whole point of the Studio. */
+var skin = Skins.clean(prefs.skin || Skins.PRESETS[0], "Walnut Study");
+function applySkin(s, save) {
+  skin = Skins.clean(s);
+  if (R2) R2.setSkin(skin);
+  if (R3) R3.setSkin(skin);
+  /* the room around the board follows the board */
+  var root = document.documentElement;
+  root.style.setProperty("--room", skin.room.bg);
+  root.style.setProperty("--amber", skin.marks.select);
+  root.style.setProperty("--glow", skin.marks.last);
+  var meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", skin.room.bg);
+  if (save !== false) { prefs.skin = skin; savePrefs(); }
+  needFrame();
+}
 
 /* ===== sound (synthesized, tiny, optional) ===== */
 var AC = null;
@@ -117,7 +137,7 @@ function useRenderer(r) {
   R = r;
   $("cv3").classList.toggle("hide", R !== R3);
   $("cv2").classList.toggle("hide", R !== R2);
-  R.setTheme(prefs.theme);
+  R.setSkin(skin);
   R.setOrientation(orientation);
   R.resize();
   if (G) { R.setPosition(currentViewBoard()); syncBoard(); }
@@ -327,6 +347,7 @@ function canActNow() {
   if (mode === "pass") return true;
   if (mode === "coach") return G.turn === humanSide && !thinking;
   if (mode === "lan") return G.turn === lanSide && Net.linked();
+  if (mode === "lesson") return !!lesson && !lessonDone && G.turn === lesson.side;
   return false; /* tour or menu */
 }
 
@@ -340,8 +361,9 @@ function tapSquare(sq) {
     var mv = null;
     for (var i = 0; i < legalMoves.length; i++) if (legalMoves[i].to === sq) { mv = legalMoves[i]; break; }
     if (mv) {
-      if (mv.promo) { askPromotion(sel, sq); return; }
+      if (mv.promo && mode !== "lesson") { askPromotion(sel, sq); return; }
       clearSel();
+      if (mode === "lesson") { lessonAttempt(mv); return; }
       commitMove(mv, "local");
       return;
     }
@@ -400,6 +422,8 @@ function commitMove(m, source, animOpts) {
   if (!G || over) return;
   var mover = G.turn;
   var evBefore = Chess.evaluate(G);       /* mover's view, for the gentle coach */
+  /* look at the move while the position is still the "before" one */
+  var lessons = (prefs.coach && mode !== "tour") ? Teach.afterMove(G, m) : [];
   var desc = animDescriptor(m);
   var san = Chess.play(G, m);
   var ply = G.played.length - 1;
@@ -432,7 +456,11 @@ function commitMove(m, source, animOpts) {
   syncTurnStrip();
   narrateOpening(san, source);
 
-  if (st.over) { endGame(st.result, st.reason); saveGame(); return; }
+  if (st.over) {
+    endGame(st.result, st.reason, lessons.length ? lessons[0] : null);
+    saveGame();
+    return;
+  }
   /* friendly automatic draw calls (both devices reach the same conclusion) */
   if (st.canClaim3) { endGame("draw", "the same position appeared three times"); saveGame(); return; }
   if (G.half >= 100) { endGame("draw", "fifty moves passed with no capture or pawn move"); saveGame(); return; }
@@ -440,9 +468,18 @@ function commitMove(m, source, animOpts) {
   saveGame();
   syncButtons();
 
+  clearLines();
+  /* name what just happened, while it's still on screen */
+  if (lessons.length) setTimeout(function () { teachMoment(lessons, mover, source); }, 520);
+  /* and give the player who's behind a free word before their turn */
+  setTimeout(oddsNudge, 1500);
+  /* when a king is nearly caged, show the cage: it explains mate better
+     than any sentence can */
+  if (st.reason === "check") setTimeout(function () { if (!over) showMateNet(G.turn); }, 700);
+
   /* the gentle coach looks over the human's shoulder */
   if (source === "local" && prefs.coach && !clock.on && (mode === "coach" || mode === "pass")) {
-    setTimeout(function () { gentleCheck(mover, evBefore, san); }, 60);
+    setTimeout(function () { gentleCheck(mover, evBefore, san); }, 1400);
   }
   /* the coach takes its turn */
   if (mode === "coach" && !over && G.turn !== humanSide) {
@@ -492,6 +529,8 @@ function gentleUndo() {
 function giveHint() {
   if (!G || over) { return; }
   if (!canActNow()) { toast(mode === "lan" && G.turn !== lanSide ? "It's your opponent's move — the hint lamp lights on your turn." : "Hints come on your turn."); return; }
+  var odds = oddsFor(G.turn);
+  if (!oddsPay(G.turn)) return;
   var sans = G.played.map(function (r) { return r.san.replace(/[+#]$/, ""); });
   var book = Book.suggest(sans);
   var res = Chess.search(G, { ms: 700 });
@@ -528,10 +567,15 @@ function giveHint() {
     }
   }
   var san = Chess.toSAN(G, chosen);
-  hintArrow = [chosen.from, chosen.to];
+  hintArrow = null;
+  /* the line *is* the hint: one curve that shows where the idea goes */
+  showLines([{ from: chosen.from, to: chosen.to, kind: "run",
+               knight: Math.abs(chosen.piece) === Chess.N }], 9000);
   syncBoard();
   snd("hint");
-  toast("💡 <b>" + san + "</b> — " + (why || explainMove(chosen, res)), null, 8000);
+  var paid = odds.free ? "" :
+    " <i>(" + (clock.on ? odds.cost + " seconds" : odds.cost + " mark" + (odds.cost > 1 ? "s" : "")) + " — you're ahead)</i>";
+  toast("💡 <b>" + san + "</b> — " + (why || explainMove(chosen, res)) + paid, null, 8000);
 }
 
 function explainMove(m, res) {
@@ -689,6 +733,10 @@ function undoSmart() {
 function startGame(newMode, opts) {
   opts = opts || {};
   stopTour();
+  lesson = null; lessonDone = false; lessonQueue = [];
+  teachSeen = {}; teachCool = 0;
+  oddsSpent = { 1: 0, "-1": 0 }; oddsNudged = 0; oddsLastNudge = -99;
+  $("lessonBar").classList.add("hide"); document.body.classList.remove("lesson-on"); reflow();
   mode = newMode;
   G = Chess.create();
   over = null;
@@ -707,8 +755,10 @@ function startGame(newMode, opts) {
   if (mode === "coach" && G.turn !== humanSide) scheduleCoach();
   needFrame();
 }
-function endGame(result, reason) {
+function endGame(result, reason, taught) {
   if (over) return;
+  /* the last move's lesson counts toward "what this game was about" */
+  if (taught && taught.concept) teachSeen[taught.concept] = (teachSeen[taught.concept] || 0) + 1;
   over = { result: result, reason: reason };
   clock.run = 0;
   clearSel();
@@ -730,11 +780,68 @@ function endGame(result, reason) {
   $("endEmoji").textContent = em;
   $("endTitle").textContent = title;
   $("endSub").textContent = sub;
+  /* the final move is the best teaching moment there is — say the thing */
+  var lessonLine = $("endLesson");
+  if (lessonLine) {
+    if (taught && taught.text) { lessonLine.innerHTML = "👁 " + taught.text; lessonLine.classList.remove("hide"); }
+    else lessonLine.classList.add("hide");
+  }
   $("endRematchSub").textContent = "Same setup" + (mode !== "pass" ? ", colours swapped." : ".");
+  renderOddsReview();
   setTimeout(function () { if (over) $("ovEnd").classList.remove("hide"); }, REDUCED ? 100 : 1100);
   lsDel(SAVE_KEY);
 }
 function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+
+/* The review turns the game into next week's practice: whatever the
+   room had to explain along the way becomes a lesson you can do now,
+   which is also how it enters the spacing schedule. */
+function renderOddsReview() {
+  var box = $("endReview2");
+  if (!box) return;
+  var bits = [];
+  var w = oddsSpent[1], b = oddsSpent[-1];
+  if (w || b) {
+    var unit = clock.on ? "s" : "";
+    bits.push("<b>Odds given:</b> White " + (w ? w + unit : "none") +
+              " · Black " + (b ? b + unit : "none") +
+              " <small>(help is free for whoever is behind)</small>");
+  }
+  var seen = Object.keys(teachSeen);
+  if (seen.length) {
+    var names = { fork: "forks", pin: "pins", skewer: "skewers", hanging: "loose pieces",
+                  backRank: "the back rank", checkmate: "checkmate", stalemate: "stalemate",
+                  castling: "castling", promotion: "promotion", centre: "the centre",
+                  development: "development", check: "check" };
+    bits.push("<b>This game was about:</b> " +
+      seen.map(function (c) { return names[c] || c; }).join(", ") + ".");
+  }
+  box.innerHTML = bits.join("<br>");
+  box.classList.toggle("hide", !bits.length);
+  /* offer the matching lesson, if there is one */
+  var btn = $("endPractise");
+  if (!btn) return;
+  /* some things the room names in a game are taught in the course under
+     a nearer name — checkmate is met through the back rank, and so on */
+  var ALIAS = { checkmate: "backRank", check: "mate-support", stalemate: "promotion",
+                centre: "development" };
+  var target = null;
+  for (var i = 0; i < seen.length && !target; i++) {
+    var want = seen[i];
+    for (var pass = 0; pass < 2 && !target; pass++) {
+      for (var j = 0; j < Learn.LESSONS.length; j++) {
+        if (Learn.LESSONS[j].concept === want) { target = Learn.LESSONS[j]; break; }
+      }
+      want = ALIAS[seen[i]];
+      if (!want) break;
+    }
+  }
+  btn.classList.toggle("hide", !target);
+  if (target) {
+    $("endPractiseSub").textContent = target.title;
+    btn.onclick = function () { $("ovEnd").classList.add("hide"); startLesson(target, []); };
+  }
+}
 
 function rematch() {
   $("ovEnd").classList.add("hide");
@@ -755,7 +862,9 @@ function saveGame() {
   lsSet(SAVE_KEY, JSON.stringify({
     v: 1, mode: mode, sans: G.played.map(function (r) { return r.san; }),
     clockStr: clockStrOf(), wMs: Math.round(clock.w), bMs: Math.round(clock.b),
-    humanSide: humanSide, skill: skill
+    humanSide: humanSide, skill: skill,
+    /* the odds ledger is part of the game's story, so it survives a reload */
+    odds: [oddsSpent[1], oddsSpent[-1], oddsNudged]
   }));
 }
 function loadSave() {
@@ -774,6 +883,7 @@ function resumeSave(s) {
     Chess.play(g, m);
   }
   if (clock.on) { clock.w = s.wMs; clock.b = s.bMs; clock.run = g.played.length >= 1 ? g.turn : 0; clock.lastT = performance.now(); }
+  if (s.odds) { oddsSpent[1] = s.odds[0] || 0; oddsSpent[-1] = s.odds[1] || 0; oddsNudged = s.odds[2] || 0; }
   R.setPosition(G.board);
   syncAll();
   saveGame();      /* startGame wrote an empty save; restore the real one */
@@ -903,6 +1013,11 @@ function lanRematch() {
    goes through feedCode() and advances the handshake by itself.
    `linkStep`: 0 choosing · 1 showing my code · 2 waiting to connect */
 var linkStep = 0, linkRole = null, scanOn = false, scanStop = null, clipWatch = 0;
+/* guards against doing the handshake twice: what I'm showing (so I never
+   feed myself my own code), the last code I acted on, whether an async
+   step is in flight, and a random token used to settle it when both
+   people happen to open a board at the same moment. */
+var myCodeRaw = "", lastFed = "", lastFedAt = 0, linkBusy = false, lanNonce = "";
 
 function scanSupported() {
   return ("BarcodeDetector" in window) && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
@@ -911,6 +1026,7 @@ function openLink() {
   hideAllOverlays();
   stopScan();
   linkStep = 0; linkRole = null;
+  myCodeRaw = ""; lastFed = ""; linkBusy = false;
   $("ovLink").classList.remove("hide");
   $("linkChoose").classList.remove("hide");
   $("linkStage").classList.add("hide");
@@ -932,6 +1048,15 @@ function linkStage(opts) {
   $("linkStage").classList.toggle("waiting", !!opts.waiting);
   $("qrFrame").classList.toggle("hide", !opts.showCode);
   $("linkCam").classList.toggle("hide", !scanSupported());
+  /* until I have a code of my own there is nothing to send or copy —
+     offering it anyway is what made the no-camera screen confusing */
+  var mine = !!opts.showCode;
+  $("linkShare").classList.toggle("hide", !mine);
+  $("linkCopy").classList.toggle("hide", !mine);
+  $("linkCodeOut").classList.toggle("hide", !mine);
+  $("codeDropLabel").textContent = mine
+    ? "Type or copy the code by hand"
+    : "Paste their code by hand";
   var r1 = $("rail1"), r2 = $("rail2"), r3 = $("rail3");
   r1.className = "railStep" + (opts.step === 1 ? " on" : " done");
   r2.className = "railStep" + (opts.step === 2 ? " on" : (opts.step > 2 ? " done" : ""));
@@ -944,6 +1069,7 @@ function linkStage(opts) {
    consumed by a host who is already mid-handshake, and a link would
    reload their page and throw the connection away. */
 function showMyCode(rawCode, asLink) {
+  myCodeRaw = normCode(rawCode) || "";
   var shown = asLink ? Net.url(rawCode) : rawCode;
   $("linkCodeOut").value = shown;
   $("qrWait").classList.add("hide");
@@ -961,19 +1087,24 @@ function hostFlow(resume) {
   var doHost = function (clockStr, side) {
     var s = side === "r" ? (Math.random() < 0.5 ? 1 : -1) : (side === "b" ? -1 : 1);
     linkRole = "host"; linkStep = 1;
+    lanNonce = String(Math.floor(Math.random() * 2147483647));
     lanCfg = { mySide: s, clockStr: clockStr,
                sans: resume && G && mode === "lan" ? G.played.map(function (r) { return r.san; }) : [],
                wMs: resume && clock.on ? Math.round(clock.w) : undefined,
                bMs: resume && clock.on ? Math.round(clock.b) : undefined };
     $("ovLink").classList.remove("hide");
     linkStage({ step: 1, showCode: true, title: "Show this to your friend",
-      how: "On their device: <b>Play together</b> → <b>Join their board</b>, then point their camera at this code." });
+      how: scanSupported()
+        ? "On their device: <b>Play together</b> → <b>Join their board</b>, then point their camera at this code."
+        : "Tap <b>Share</b> to send them the link — tapping it opens their board already joining. Then they'll send you a short answer code to paste." });
     codeBusy("making your code…");
-    Net.host({ name: lanMy }).then(function (code) {
+    Net.host({ name: lanMy, n: lanNonce }).then(function (code) {
       showMyCode(code, true);           /* invite: a tappable link */
       /* the host watches for the reply straight away, so the two phones
-         can simply face each other */
-      startScan();
+         can simply face each other; where there's no camera, the
+         clipboard watcher is what catches their pasted answer */
+      if (scanSupported()) startScan();
+      else $("codeDrop").open = true;
       startClipWatch();
     }).catch(function () {
       codeBusy("that didn't work — close and try again");
@@ -986,67 +1117,154 @@ function hostFlow(resume) {
 /* --- joiner --- */
 function joinFlow(prefill) {
   grabName();
-  linkRole = "join"; linkStep = 1;
+  linkRole = "join"; linkStep = 1; myCodeRaw = ""; lastFed = "";
   $("ovLink").classList.remove("hide");
-  linkStage({ step: 1, showCode: false,
-    title: "Point at their code",
-    how: "Hold your camera up to your friend's screen — or tap <b>Paste a code</b> if they sent it to you." });
-  if (prefill) { feedCode(prefill); return; }
-  startScan();                 /* the camera opens itself: nothing to tap */
+  if (prefill) {
+    linkStage({ step: 1, showCode: false, title: "Joining…", how: "Reading their invite." });
+    feedCode(prefill);
+    return;
+  }
+  if (scanSupported()) {
+    linkStage({ step: 1, showCode: false,
+      title: "Point at their code",
+      how: "Hold your camera up to your friend's screen — or tap <b>Paste a code</b> if they sent it to you." });
+    startScan();               /* the camera opens itself: nothing to tap */
+  } else {
+    /* no camera here (iPhones can't scan inside a web page) — so lead
+       with the way that does work rather than showing an empty frame */
+    pasteFirst("Paste their invite",
+      "This browser can't use the camera inside a page. Ask them to tap <b>Share</b> on their board and send you the link — then paste it below (or just tap the link they send).");
+  }
   startClipWatch();
 }
 
-/* --- the one door every code comes through --- */
+/* the paste-led version of a step, used whenever scanning isn't possible */
+function pasteFirst(title, how) {
+  linkStage({ step: 1, showCode: false, title: title, how: how,
+    note: "Tip: if you copy the code, this page picks it up on its own." });
+  $("codeDrop").open = true;
+  var box = $("linkCodeIn");
+  if (box) setTimeout(function () { try { box.focus(); } catch (e) {} }, 250);
+}
+/* shown once the joiner has an answer but no camera to be scanned with */
+function sendItInstead(line) {
+  $("linkHow").innerHTML = line + " tap <b>Share</b> or <b>Copy</b> below — they'll paste it on their board.";
+  $("codeDrop").open = true;
+}
+
+/* --- the one door every code comes through ---
+   Everything (scanned, pasted, clipboard, typed, tapped link) arrives
+   here. Three things kept going wrong before, and each has a guard now:
+
+     · It used to decide what to do from *my role* rather than from what
+       the code actually is, so a host who scanned another invite tried
+       to treat it as an answer and failed forever.
+     · Two people can both tap "Host" — then both phones show an invite
+       and neither is listening for one. Rather than make anyone start
+       over, each invite carries a random token; whoever's is larger
+       silently gives up hosting and joins the other. Both sides work it
+       out the same way without a word passing between them.
+     · The same code could be fed twice (camera + clipboard, or a second
+       glance at the same screen), which tore down a half-built
+       connection. Now a code in flight, a repeat, or my own code are
+       all ignored. */
+function normCode(text) {
+  var m = String(text || "").replace(/\s+/g, "").match(/CHESS(1|2)\.[A-Za-z0-9_-]+/);
+  return m ? m[0] : null;
+}
 function feedCode(text) {
-  if (!text || !/CHESS(1|2)\./.test(text)) return false;
-  if (linkRole === "join" && linkStep === 1) {
-    stopScan();
-    linkStage({ step: 2, showCode: true, waiting: true, title: "Now show them yours",
-      how: "Almost there — let your friend's camera see this code and you're playing.",
-      note: "Keep this open; the boards link themselves the moment they see it." });
-    codeBusy("answering…");
-    linkStep = 2;
-    Net.join(text).then(function (res) {
-      if (!res) {
-        toast("Couldn't read that invite — ask for a fresh one.");
-        joinFlow(null);
-        return;
-      }
-      /* the invite carried their name: greet them by it, so you can see
-         at a glance that you scanned the right board */
-      var host = res.meta && res.meta.name ? String(res.meta.name).slice(0, 18) : "";
-      if (host) {
-        lanOpp = host;
-        $("linkTitle").textContent = "Found " + host + " — now show them yours";
-        $("linkHow").innerHTML = "Let <b>" + escHtml(host) + "</b>'s camera see this code and you're playing.";
-      }
-      showMyCode(res.reply, false);     /* reply: a bare code, never a link */
-    }).catch(function () {
-      toast("Couldn't read that invite — try again.");
-      joinFlow(null);
-    });
-    return true;
+  var code = normCode(text);
+  if (!code) return false;
+  if (linkBusy) return true;                                   /* one at a time */
+  if (code === myCodeRaw) return true;                         /* that's mine */
+  if (code === lastFed && Date.now() - lastFedAt < 30000) return true;
+  lastFed = code; lastFedAt = Date.now();
+  linkBusy = true;
+  Net.decode(code).then(function (o) {
+    linkBusy = false;
+    if (!o || !o.k) { linkOops("That code was unreadable — ask for a fresh one."); return; }
+    if (o.k === "invite") return takeInvite(code, o);
+    if (o.k === "reply") return takeReply(code);
+    linkOops("That code isn't one of ours.");
+  }).catch(function () {
+    linkBusy = false;
+    linkOops("That code was unreadable — ask for a fresh one.");
+  });
+  return true;
+}
+function linkOops(msg) {
+  toast(msg);
+  lastFed = "";                    /* let them try the same code again */
+  if (linkRole && linkStep < 3) startScan();
+}
+
+/* an invite: I become the joiner — unless I'm already hosting, in which
+   case the tokens decide which of us yields */
+function takeInvite(code, o) {
+  if (linkRole === "host") {
+    var theirs = (o.meta && o.meta.n) ? String(o.meta.n) : "";
+    if (!theirs || theirs === lanNonce) { startScan(); return; }
+    if (lanNonce < theirs) {
+      /* I keep the board; they'll stand down on their side the same way */
+      $("linkHow").innerHTML = "You both opened a board — keeping <b>yours</b>. Their phone is standing down; just keep facing each other.";
+      startScan();
+      return;
+    }
+    /* I yield: close my half-built board and join theirs instead */
+    Net.close();
+    linkRole = "join"; linkStep = 1; myCodeRaw = "";
+    toast("You both opened a board — joining theirs instead.");
   }
-  if (linkRole === "host" && linkStep === 1) {
-    stopScan();
-    linkStep = 2;
-    linkStage({ step: 2, showCode: true, waiting: true, title: "Got it — linking…",
-      how: "Their answer came through. Shaking hands…" });
-    codeBusy("linking…");
-    Net.acceptReply(text).then(function (ok) {
-      if (!ok) {
-        toast("That code didn't match this board — showing yours again.");
-        linkStep = 1;
-        linkStage({ step: 1, showCode: true, title: "Show this to your friend",
-          how: "On their device: <b>Play together</b> → <b>Join their board</b>." });
-        showMyCode($("linkCodeOut").value);
-        startScan();
-      }
-      /* success continues in Net.onLink → celebrateLink() */
-    });
-    return true;
+  if (linkStep >= 2 && linkRole === "join") { startScan(); return; }  /* already answered */
+  linkRole = "join";
+  stopScan();
+  linkStep = 2;
+  linkStage({ step: 2, showCode: true, waiting: true, title: "Now show them yours",
+    how: "Almost there — let your friend's camera see this code and you're playing.",
+    note: "Keep this open; the boards link themselves the moment they see it." });
+  codeBusy("answering…");
+  Net.join(code).then(function (res) {
+    if (!res) { linkStep = 1; linkOops("Couldn't read that invite — ask for a fresh one."); joinFlow(null); return; }
+    var host = res.meta && res.meta.name ? String(res.meta.name).slice(0, 18) : "";
+    if (host) {
+      lanOpp = host;
+      $("linkTitle").textContent = "Found " + host + " — now show them yours";
+      $("linkHow").innerHTML = "Let <b>" + escHtml(host) + "</b>'s camera see this code and you're playing.";
+    }
+    showMyCode(res.reply, false);      /* reply: a bare code, never a link */
+    if (!scanSupported()) sendItInstead("Send this answer back to them:");
+  }).catch(function () {
+    linkStep = 1;
+    linkOops("Couldn't read that invite — try again.");
+    joinFlow(null);
+  });
+}
+
+/* an answer: only the host who made the matching invite can use it */
+function takeReply(code) {
+  if (linkRole !== "host") {
+    linkOops("That's an answer code — it only works on the board that made the invite.");
+    return;
   }
-  return false;
+  stopScan();
+  linkStep = 2;
+  linkStage({ step: 2, showCode: true, waiting: true, title: "Got it — linking…",
+    how: "Their answer came through. Shaking hands…" });
+  codeBusy("linking…");
+  Net.acceptReply(code).then(function (ok) {
+    if (!ok) {
+      linkStep = 1;
+      lastFed = "";
+      linkStage({ step: 1, showCode: true, title: "Show this to your friend",
+        how: "That answer was for a different board — here's yours again." });
+      showMyCode(myCodeRaw, true);
+      startScan();
+    }
+    /* success continues in Net.onLink → celebrateLink() */
+  }).catch(function () {
+    linkStep = 1; lastFed = "";
+    linkOops("That answer didn't fit this board.");
+  });
 }
 
 /* --- the live camera --- */
@@ -1075,10 +1293,21 @@ function startScan() {
         if (stopped) return;
         var hit = codes && codes.filter(function (c) { return /CHESS(1|2)\./.test(c.rawValue); })[0];
         if (hit) {
-          frame.classList.add("found");
-          $("camHint").textContent = "got it!";
-          snd("hint");
-          feedCode(hit.rawValue);
+          var mine = normCode(hit.rawValue) === myCodeRaw;
+          if (!mine) {
+            frame.classList.add("found");
+            $("camHint").textContent = "got it!";
+            snd("hint");
+            feedCode(hit.rawValue);
+          }
+          /* keep looking: if that code wasn't for us (our own screen in
+             shot, or a board that stood down) the hunt must go on */
+          setTimeout(function () {
+            if (stopped) return;
+            frame.classList.remove("found");
+            $("camHint").textContent = "looking for their code…";
+            poll();
+          }, mine ? 400 : 1500);
           return;
         }
         setTimeout(poll, 220);
@@ -1086,7 +1315,14 @@ function startScan() {
     })();
   }).catch(function () {
     scanStop();
-    $("linkNote").textContent = "No camera here — tap “Paste a code” instead, or send yours with Share.";
+    /* permission refused or no lens: switch to the path that still works */
+    if (linkRole === "join" && linkStep === 1) {
+      pasteFirst("Paste their invite",
+        "No camera available — ask them to tap <b>Share</b> on their board and send you the link, then paste it here.");
+    } else {
+      $("linkNote").textContent = "No camera here — use Share or Copy, and paste what they send back.";
+      $("codeDrop").open = true;
+    }
   });
 }
 function stopScan() {
@@ -1103,7 +1339,8 @@ function startClipWatch() {
   clipWatch = setInterval(function () {
     if (document.visibilityState !== "visible") return;
     navigator.clipboard.readText().then(function (t) {
-      if (t && /CHESS(1|2)\./.test(t) && t !== $("linkCodeOut").value) feedCode(t);
+      var c = normCode(t);
+      if (c && c !== myCodeRaw) feedCode(c);
     }).catch(function () { stopClipWatch(); });   /* permission denied: stop asking */
   }, 1200);
 }
@@ -1252,15 +1489,618 @@ function showLearn(n) {
   $("ovLearn").classList.remove("hide");
 }
 
+
+
+/* ===================== odds =====================
+   Chess has an old and generous tradition: the stronger player gives
+   *odds* — a pawn, a piece, a slice of the clock — so that a lopsided
+   game is still a real game. This is that idea, moved from before the
+   game to during it, and paid in help rather than material.
+
+   The player who is behind gets the racing line, the threat warnings
+   and the nudges for nothing, offered before they ask. The player who
+   is ahead can have exactly the same help, but it costs them: seconds
+   off their clock if one is running, otherwise a mark against their
+   name in the review at the end. The price rises with the lead.
+
+   The effect is that a game between mismatched players keeps its shape
+   — and both people are being coached the whole way, because the one in
+   front is constantly being asked whether the help is worth the price,
+   which is its own kind of thinking. */
+var oddsSpent = { 1: 0, "-1": 0 };     /* seconds (or marks) each side has paid */
+var oddsNudged = 0, oddsLastNudge = -99;
+
+/* how far ahead `side` is, in pawns, from the position alone */
+function lead(side) {
+  if (!G) return 0;
+  var ev = Chess.evaluate(G);                 /* from the side to move */
+  var white = G.turn === 1 ? ev : -ev;
+  return (side === 1 ? white : -white) / 100;
+}
+
+/* what help costs this side right now */
+function oddsFor(side) {
+  var d = lead(side);
+  if (d <= -1.2) {
+    return { free: true, cost: 0, mood: "behind",
+             why: "You're behind — help is free while it is." };
+  }
+  if (d < 1.2) {
+    return { free: false, cost: clock.on ? 10 : 1, mood: "level",
+             why: "It's about level — a small price." };
+  }
+  var steep = Math.min(4, 1 + Math.floor((d - 1.2) / 1.5));
+  return { free: false, cost: clock.on ? 10 * steep : steep, mood: "ahead",
+           why: "You're ahead by about " + d.toFixed(1) + " — help costs more from here." };
+}
+function oddsLabel(side) {
+  var o = oddsFor(side);
+  if (o.free) return "free";
+  return clock.on ? ("−" + o.cost + "s") : ("−" + o.cost);
+}
+/* take the payment; returns false if they can't afford it */
+function oddsPay(side) {
+  var o = oddsFor(side);
+  if (o.free) return true;
+  if (clock.on) {
+    var have = side === 1 ? clock.w : clock.b;
+    if (have < (o.cost + 5) * 1000) {
+      toast("Not enough clock left to buy that — but it's free again the moment you're behind.");
+      return false;
+    }
+    if (side === 1) clock.w -= o.cost * 1000; else clock.b -= o.cost * 1000;
+    syncClocks();
+  }
+  oddsSpent[side] += o.cost;
+  return true;
+}
+/* the side the local person is playing (pass & play: whoever is to move) */
+function mySide() {
+  if (mode === "coach") return humanSide;
+  if (mode === "lan") return lanSide;
+  return G ? G.turn : 1;
+}
+
+/* the free coaching the trailing player gets without asking: one quiet
+   word at a time, never twice in a row, and only when actually behind */
+function oddsNudge() {
+  if (!prefs.coach || !G || over || mode === "lesson" || mode === "tour") return;
+  var side = G.turn;
+  if (mode === "coach" && side !== humanSide) return;
+  if (mode === "lan" && side !== lanSide) return;
+  if (!oddsFor(side).free) return;                      /* only for the one behind */
+  if (G.played.length - oddsLastNudge < 4) return;      /* not every move */
+  var warn = Teach.warnings(G, side);
+  var chance = Teach.opportunities(G, side);
+  var pick = (warn.length && warn[0].weight >= 90) ? warn[0] : (chance.length ? chance[0] : null);
+  if (!pick) return;
+  oddsLastNudge = G.played.length;
+  oddsNudged++;
+  if (pick.squares && pick.squares.length) {
+    R.setNet(pick.concept === "backRank" ? [] : []);
+    showLines([{ from: pick.squares[0], to: pick.squares[Math.min(1, pick.squares.length - 1)],
+                 kind: pick.concept === "hanging" ? "threat" : "ghost" }], 5200);
+  }
+  toast("🫱 " + pick.text + " <i>(free — you're behind)</i>", null, 7000);
+}
+
+/* ---- the lines on the board ---- */
+var lineTimer = 0;
+function showLines(list, ms) {
+  if (R.setLines) R.setLines(list);
+  if (R2 && R2.setLines) R2.setLines(list);
+  if (R3 && R3.setLines) R3.setLines(list);
+  clearTimeout(lineTimer);
+  needFrame();
+  if (ms) lineTimer = setTimeout(clearLines, ms);
+}
+function clearLines() {
+  clearTimeout(lineTimer);
+  if (R2 && R2.setLines) { R2.setLines([]); R2.setNet([]); }
+  if (R3 && R3.setLines) { R3.setLines([]); R3.setNet([]); }
+  needFrame();
+}
+/* the mate net: every square around the king that is denied to it */
+function showMateNet(side) {
+  if (!G) return;
+  var kingSq = G.kings[side === 1 ? 0 : 1], out = [];
+  var K = [17, 16, 15, 1, -17, -16, -15, -1], i, t;
+  /* Ask the rules rather than the attack map. A square can be denied for
+     reasons a simple "is it attacked?" misses — most famously the square
+     directly behind the king along the checking line, which only looks
+     safe because the king itself is standing in the way. */
+  var legal = {};
+  if (G.turn === side) {
+    var ms = Chess.movesFrom(G, kingSq);
+    for (i = 0; i < ms.length; i++) legal[ms[i].to] = true;
+  }
+  for (i = 0; i < 8; i++) {
+    t = kingSq + K[i];
+    if (t & 0x88) continue;
+    var occ = G.board[t];
+    if (occ && (occ > 0 ? 1 : -1) === side) continue;      /* own piece: not an escape anyway */
+    if (G.turn === side ? !legal[t] : Chess.attacked(G, t, -side)) out.push(t);
+  }
+  if (R2 && R2.setNet) R2.setNet(out);
+  if (R3 && R3.setNet) R3.setNet(out);
+  needFrame();
+  return out.length;
+}
+
+/* ===================== teachable moments =====================
+   The best teaching in the app happens inside your own game: the
+   instant a fork appears on the board you made it on, it gets named.
+   Two rules keep it a teacher rather than a nag — it says one thing per
+   move at most, and it goes quiet on ideas you've shown you know
+   (mastery comes from the Academy's spacing data, so the room really
+   does stop explaining forks once forks are yours). */
+var teachSeen = {}, teachCool = 0;
+function teachMoment(list, mover, source) {
+  if (!prefs.coach || !G || over || mode === "lesson" || mode === "tour") return;
+  /* in a two-player game, only speak about the move the local player made */
+  if (mode === "lan" && source !== "local") return;
+  if (mode === "coach" && mover !== humanSide) return;
+  if (teachCool > 0) { teachCool--; return; }
+  var prog = Learn.load();
+  for (var i = 0; i < list.length; i++) {
+    var item = list[i];
+    var m = Learn.mastery(prog, item.concept);
+    var shown = teachSeen[item.concept] || 0;
+    /* big moments (mate, stalemate, a hanging piece) always get said */
+    var major = item.weight >= 90;
+    if (!major && (m > 0.6 || shown >= 2)) continue;
+    if (major && shown >= 3) continue;
+    teachSeen[item.concept] = shown + 1;
+    teachCool = major ? 0 : 2;
+    if (item.squares && item.squares.length >= 2) {
+      hintArrow = [item.squares[0], item.squares[1]];
+      syncBoard();
+      setTimeout(function () { hintArrow = null; syncBoard(); }, 4200);
+    }
+    toast("👁 " + item.text, null, 7000);
+    return;
+  }
+}
+
+/* ===================== the Academy =====================
+   Lessons run on the real board with the real pieces, because a
+   position you can touch is remembered and a diagram is not. */
+var lesson = null, lessonDone = false, lessonTries = 0, lessonHints = 0,
+    lessonQueue = [], lessonWorked = false, lessonPrev = null;
+
+function openAcademy() {
+  hideAllOverlays();
+  closeStudio();
+  renderAcademy();
+  $("ovAcademy").classList.remove("hide");
+}
+function renderAcademy() {
+  var p = Learn.load(), st = Learn.stats(p);
+  $("aSolved").textContent = st.solved + "/" + st.total;
+  $("aDue").textContent = st.due;
+  $("aStreak").textContent = st.streak;
+  $("aPractise").classList.toggle("hide", st.due === 0);
+  $("aPractiseSub").textContent = st.due + " idea" + (st.due === 1 ? "" : "s") + " ready to come back.";
+  var nx = Learn.next(p);
+  $("aNext").classList.toggle("hide", !nx);
+  if (nx) $("aNextSub").textContent = nx.title;
+
+  var box = $("academyList");
+  box.innerHTML = "";
+  Learn.CHAPTERS.forEach(function (ch) {
+    var h = document.createElement("div");
+    h.className = "chapTitle";
+    h.textContent = ch.name;
+    box.appendChild(h);
+    var b = document.createElement("div");
+    b.className = "chapBlurb";
+    b.textContent = ch.blurb;
+    box.appendChild(b);
+    Learn.inChapter(ch.id).forEach(function (L) {
+      var solved = (p.lessons[L.id] || {}).solved;
+      var m = Learn.mastery(p, L.concept);
+      var row = document.createElement("button");
+      row.className = "lrow2";
+      row.innerHTML = '<span class="tick">' + (solved ? "✅" : "○") + "</span>" +
+        '<span class="lt"><b></b><small></small></span>' +
+        '<span class="mBar"><i style="width:' + Math.round(m * 100) + '%"></i></span>';
+      row.querySelector("b").textContent = L.title;
+      row.querySelector("small").textContent = L.ask;
+      row.addEventListener("click", function () { startLesson(L, []); });
+      box.appendChild(row);
+    });
+  });
+}
+
+function startPractice() {
+  var p = Learn.load(), list = Learn.due(p);
+  if (!list.length) { toast("Nothing is due just yet — that's the spacing working. Come back tomorrow."); return; }
+  startLesson(list[0], list.slice(1));
+}
+function startNextLesson() {
+  var nx = Learn.next(Learn.load());
+  if (!nx) { toast("🎓 You've been through every lesson. Practice keeps them — check back for what's due."); return; }
+  startLesson(nx, []);
+}
+
+function startLesson(L, queue) {
+  stopTour();
+  clearTimeout(coachTimer);
+  hideAllOverlays();
+  closeStudio();
+  lesson = L; lessonQueue = queue || []; lessonDone = false; lessonTries = 0; lessonHints = 0;
+  lessonWorked = false;
+  mode = "lesson"; over = null; thinking = false;
+  G = Chess.create(L.fen);
+  lessonPrev = null;
+  clockConfig("none");
+  clearSel(); hintArrow = null; viewPly = -1;
+  orientation = L.side;
+  R.setOrientation(orientation);
+  R.setPosition(G.board, { flourish: true });
+  $("openingCard").classList.add("hide");
+  $("viewBanner").classList.add("hide");
+  syncAll();
+  needFrame();
+  /* a brand-new idea is demonstrated once, then handed straight back */
+  var p = Learn.load();
+  if (L.worked && !(p.lessons[L.id] || {}).solved) showWorkedExample();
+  else askLesson();
+}
+
+/* the stage gives up room for the bar/drawer instead of being covered */
+function reflow() {
+  if (R2) R2.resize();
+  if (R3) R3.resize();
+  needFrame();
+}
+function lessonUI(html, cls) {
+  document.body.classList.add("lesson-on");
+  reflow();
+  var bar = $("lessonBar");
+  bar.className = "lessonBar" + (cls ? " " + cls : "");
+  bar.innerHTML = html;
+  bar.classList.remove("hide");
+}
+function lessonChip(label, fn, go) {
+  var b = document.createElement("button");
+  b.className = "lchip" + (go ? " go" : "");
+  b.textContent = label;
+  b.addEventListener("click", fn);
+  return b;
+}
+function lessonRow(chips) {
+  var row = document.createElement("div");
+  row.className = "lrow";
+  chips.forEach(function (c) { if (c) row.appendChild(c); });
+  $("lessonBar").appendChild(row);
+  return row;
+}
+
+function showWorkedExample() {
+  lessonWorked = true;
+  var m = Chess.fromSAN(G, lesson.best);
+  lessonUI('<div class="lkick">Watch first</div>' +
+    '<div class="lask">' + esc(lesson.title) + '</div>' +
+    '<div class="lsay">Here it is once, so you know what you\'re looking for. Then it\'s yours.</div>');
+  setTimeout(function () {
+    if (mode !== "lesson" || !m) return;
+    var desc = animDescriptor(m);
+    var g2 = Chess.create(lesson.fen);
+    Chess.play(g2, m);
+    snd(m.capt ? "capture" : "move");
+    R.animateMove(desc, g2.board, { dur: REDUCED ? 1 : 700, glow: true }, function () {
+      lessonUI('<div class="lkick">Watch first</div>' +
+        '<div class="lask">' + esc(lesson.best) + '</div>' +
+        '<div class="lsay">' + lesson.why + '</div>');
+      lessonRow([lessonChip("Now let me try →", function () {
+        G = Chess.create(lesson.fen);
+        R.setPosition(G.board);
+        clearSel(); syncAll(); askLesson();
+      }, true)]);
+    });
+    needFrame();
+  }, REDUCED ? 200 : 1500);
+}
+
+function askLesson() {
+  var side = lesson.side === 1 ? "White" : "Black";
+  lessonUI('<div class="lkick">' + esc(chapterName(lesson.chapter)) + " · you are " + side + '</div>' +
+    '<div class="lask">' + esc(lesson.ask) + '</div>' +
+    (lessonTries ? '<div class="lsay">Have another go — the board is small enough to see all of it.</div>' : ''));
+  lessonRow([
+    lessonChip(lessonHints ? "Another nudge" : "💡 Nudge", giveLessonHint),
+    lessonChip("Show me", revealLesson),
+    lessonChip("Leave", exitLesson)
+  ]);
+}
+function chapterName(id) {
+  for (var i = 0; i < Learn.CHAPTERS.length; i++) if (Learn.CHAPTERS[i].id === id) return Learn.CHAPTERS[i].name;
+  return "Lesson";
+}
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+
+/* hints fade in three steps: a question, then where to look, then the move */
+function giveLessonHint() {
+  lessonHints++;
+  if (lessonHints === 1) {
+    lessonUI('<div class="lkick">A nudge</div><div class="lask">' + esc(lesson.ask) + '</div>' +
+      '<div class="lsay">' + lesson.hint + '</div>');
+    lessonRow([lessonChip("Show me where", giveLessonHint), lessonChip("Leave", exitLesson)]);
+  } else {
+    var m = Chess.fromSAN(G, lesson.best);
+    if (m) { sel = m.from; legalMoves = Chess.movesFrom(G, m.from); syncBoard(); }
+    lessonUI('<div class="lkick">A nudge</div><div class="lask">' + esc(lesson.ask) + '</div>' +
+      '<div class="lsay">This is the piece. Where does it want to go?</div>');
+    lessonRow([lessonChip("Just show me the move", revealLesson), lessonChip("Leave", exitLesson)]);
+  }
+  snd("hint");
+}
+function revealLesson() {
+  var m = Chess.fromSAN(G, lesson.best);
+  if (m) { hintArrow = [m.from, m.to]; syncBoard(); }
+  lessonUI('<div class="lkick">The answer</div><div class="lask">' + esc(lesson.best) + '</div>' +
+    '<div class="lsay">' + lesson.why + '</div>');
+  lessonRow([lessonChip("Let me play it", function () {
+    hintArrow = null; syncBoard(); askLesson();
+  }, true), lessonChip("Leave", exitLesson)]);
+  /* revealing counts as not knowing it — the schedule should hear that */
+  var p = Learn.load();
+  Learn.grade(p, lesson, false, null);
+  Learn.save(p);
+}
+
+function lessonAttempt(m) {
+  if (!lesson || lessonDone) return;
+  var verdict = Learn.accepts(lesson, G, m);
+  var desc = animDescriptor(m);
+  var before = Chess.fen(G);
+  var g2 = Chess.create(before);
+  Chess.play(g2, m);
+  hintArrow = null;
+
+  if (verdict.ok) {
+    lessonDone = true;
+    snd(m.capt ? "capture" : "move");
+    R.animateMove(desc, g2.board, { dur: REDUCED ? 1 : 380 }, function () {
+      G = g2;
+      syncBoard();
+      celebrateLesson(verdict);
+    });
+    needFrame();
+    return;
+  }
+
+  /* wrong: play it anyway so they *see* the consequence, then rewind */
+  lessonTries++;
+  snd("move");
+  var say = Learn.critique(lesson, G, m);
+  R.animateMove(desc, g2.board, { dur: REDUCED ? 1 : 300 }, function () {
+    lessonUI('<div class="lkick">Not that one</div>' +
+      '<div class="lask">' + esc(Chess.toSAN(Chess.create(before), m)) + '</div>' +
+      '<div class="lsay">' + say + '</div>', "bad");
+    lessonRow([lessonChip("Take it back", function () {
+      R.setPosition(Chess.create(before).board);
+      clearSel(); syncBoard(); askLesson(); needFrame();
+    }, true), lessonChip("Show me", function () {
+      R.setPosition(Chess.create(before).board);
+      clearSel(); syncBoard(); revealLesson(); needFrame();
+    })]);
+  });
+  needFrame();
+}
+
+function celebrateLesson(verdict) {
+  snd("win");
+  var why = verdict.best ? lesson.why : (lesson.alsoWhy || lesson.why);
+  lessonUI('<div class="lkick">' + (verdict.best ? "That's it" : "That works") + '</div>' +
+    '<div class="lask">' + esc(lesson.title) + '</div>' +
+    '<div class="lsay">' + why + '</div>', "good");
+  /* metacognition: the learner's own read is what schedules the review */
+  var ask = document.createElement("div");
+  ask.className = "lsay";
+  ask.style.marginTop = "8px";
+  ask.textContent = "Honestly — did you see it, or was it a guess?";
+  $("lessonBar").appendChild(ask);
+  lessonRow([
+    lessonChip("I saw it", function () { finishLesson("sure"); }, true),
+    lessonChip("Half-guessed", function () { finishLesson("shaky"); }),
+    lessonChip("Lucky guess", function () { finishLesson("guess"); })
+  ]);
+}
+
+function finishLesson(confidence) {
+  var p = Learn.load();
+  /* needing hints or several tries is honest information too */
+  var clean = lessonTries === 0 && lessonHints === 0;
+  Learn.grade(p, lesson, true, clean ? confidence : (confidence === "sure" ? "shaky" : "guess"));
+  Learn.save(p);
+  var nextUp = lessonQueue.shift();
+  if (nextUp) { startLesson(nextUp, lessonQueue); return; }
+  var st = Learn.stats(p);
+  lessonUI('<div class="lkick">Done</div>' +
+    '<div class="lask">Learned ' + st.solved + " of " + st.total + '</div>' +
+    '<div class="lsay">This comes back in a few days — that gap is what turns it into something you just <i>see</i>.</div>', "good");
+  lessonRow([
+    lessonChip("Next lesson →", function () { startNextLesson(); }, true),
+    lessonChip("The Academy", openAcademy),
+    lessonChip("Play a game", showMenu)
+  ]);
+}
+
+function exitLesson() {
+  lesson = null; lessonDone = false; lessonQueue = [];
+  $("lessonBar").classList.add("hide"); document.body.classList.remove("lesson-on"); reflow();
+  mode = null;
+  openAcademy();
+}
+
+/* ===================== the Skin Studio =====================
+   A drawer, not a wall: the game keeps playing behind it and every
+   control writes straight into the live skin. */
+var studioOpen = false;
+function openStudio() {
+  studioOpen = true;
+  $("studio").classList.add("open");
+  $("studio").setAttribute("aria-hidden", "false");
+  document.body.classList.add("studio-on");
+  renderStudio();
+  setTimeout(reflow, 300);          /* after the drawer has slid in */
+  reflow();
+}
+function closeStudio() {
+  if (!studioOpen) return;
+  studioOpen = false;
+  var el = $("studio");
+  if (el) { el.classList.remove("open"); el.setAttribute("aria-hidden", "true"); }
+  document.body.classList.remove("studio-on");
+  setTimeout(reflow, 300);
+  reflow();
+}
+function swatchOf(s) {
+  return '<span class="swatch">' +
+    '<i style="background:' + s.board.light + '"></i><i style="background:' + s.board.dark + '"></i>' +
+    '<i style="background:' + s.pieces.black + '"></i><i style="background:' + s.pieces.white + '"></i></span>';
+}
+function renderStudio() {
+  /* gallery: the house set, then anything you saved or a friend sent */
+  var box = $("stPresets");
+  box.innerHTML = "";
+  var mine = Skins.loadMine();
+  var all = Skins.PRESETS.concat(mine);
+  all.forEach(function (s, i) {
+    var b = document.createElement("button");
+    b.className = "preset" + (s.name === skin.name ? " sel" : "");
+    b.innerHTML = swatchOf(s) + '<span class="pt"><b></b><small></small></span>';
+    b.querySelector("b").textContent = s.name;
+    b.querySelector("small").textContent = (i >= Skins.PRESETS.length ? "yours · " : "") + s.note;
+    b.addEventListener("click", function () { applySkin(s); renderStudio(); });
+    box.appendChild(b);
+  });
+
+  /* materials + patterns */
+  var mats = $("stMaterials");
+  mats.innerHTML = "";
+  Object.keys(Skins.MATERIALS).forEach(function (id) {
+    var b = document.createElement("button");
+    b.className = "stPick" + (skin.pieces.material === id ? " sel" : "");
+    b.textContent = Skins.MATERIALS[id].label;
+    b.addEventListener("click", function () {
+      skin.pieces.material = id; applySkin(skin); renderStudio();
+    });
+    mats.appendChild(b);
+  });
+  $("stMatNote").textContent = Skins.MATERIALS[skin.pieces.material].note;
+
+  var pats = $("stPatterns");
+  pats.innerHTML = "";
+  Object.keys(Skins.PATTERNS).forEach(function (id) {
+    var b = document.createElement("button");
+    b.className = "stPick" + (skin.board.pattern === id ? " sel" : "");
+    b.textContent = Skins.PATTERNS[id].label;
+    b.addEventListener("click", function () {
+      skin.board.pattern = id; applySkin(skin); renderStudio();
+    });
+    pats.appendChild(b);
+  });
+
+  /* the colour wells and sliders */
+  var C = [["cLight", "board", "light"], ["cDark", "board", "dark"], ["cEdge", "board", "edge"],
+           ["cRim", "board", "rim"], ["cWhite", "pieces", "white"], ["cBlack", "pieces", "black"],
+           ["cBg", "room", "bg"], ["cSelect", "marks", "select"], ["cLegal", "marks", "legal"],
+           ["cCapture", "marks", "capture"], ["cLast", "marks", "last"], ["cCheck", "marks", "check"],
+           ["cHint", "marks", "hint"]];
+  C.forEach(function (row) { $(row[0]).value = skin[row[1]][row[2]]; });
+  $("sGrain").value = Math.round(skin.board.grain * 100);
+  $("sGloss").value = Math.round(skin.board.gloss * 100);
+  $("sShine").value = Math.round(skin.pieces.shine * 100);
+  $("sRim").value = Math.round(skin.pieces.rim * 100);
+}
+function wireStudio() {
+  var C = [["cLight", "board", "light"], ["cDark", "board", "dark"], ["cEdge", "board", "edge"],
+           ["cRim", "board", "rim"], ["cWhite", "pieces", "white"], ["cBlack", "pieces", "black"],
+           ["cBg", "room", "bg"], ["cSelect", "marks", "select"], ["cLegal", "marks", "legal"],
+           ["cCapture", "marks", "capture"], ["cLast", "marks", "last"], ["cCheck", "marks", "check"],
+           ["cHint", "marks", "hint"]];
+  C.forEach(function (row) {
+    $(row[0]).addEventListener("input", function () {
+      skin[row[1]][row[2]] = this.value;
+      skin.name = skin.name.indexOf("(edited)") >= 0 ? skin.name : skin.name + " (edited)";
+      applySkin(skin);
+    });
+  });
+  var S = [["sGrain", "board", "grain"], ["sGloss", "board", "gloss"],
+           ["sShine", "pieces", "shine"], ["sRim", "pieces", "rim"]];
+  S.forEach(function (row) {
+    $(row[0]).addEventListener("input", function () {
+      skin[row[1]][row[2]] = (+this.value) / 100;
+      applySkin(skin);
+    });
+  });
+  $("stRandom").addEventListener("click", function () {
+    applySkin(Skins.random()); renderStudio();
+    toast("🎲 " + skin.name + " — keep it with <b>Save to gallery</b>, or roll again.", null, 3500);
+  });
+  $("stClose").addEventListener("click", closeStudio);
+  $("stSave").addEventListener("click", function () {
+    var saved = Skins.addMine(skin);
+    applySkin(saved);
+    renderStudio();
+    toast("💾 Saved to your gallery as <b>" + esc(saved.name) + "</b>.");
+  });
+  $("stExport").addEventListener("click", function () {
+    var code = Skins.encode(skin);
+    var web = (location.protocol === "https:" || location.protocol === "http:");
+    var out = web ? (location.origin + location.pathname + "#skin=" + code) : code;
+    $("stCode").value = out;
+    $("stCode").focus();
+    $("stCode").select();
+    if (navigator.share) navigator.share({ title: "A chess board look", text: skin.name, url: out }).catch(function () {});
+    else clip(out);
+  });
+  $("stImport").addEventListener("click", function () {
+    var got = Skins.decode($("stCode").value);
+    if (!got) {
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        navigator.clipboard.readText().then(function (t) {
+          var g2 = Skins.decode(t);
+          if (g2) { adoptSkin(g2); } else { toast("That doesn't look like a skin code — they start with SKIN1."); }
+        }, function () { toast("Paste the code into the box first, then tap Import."); });
+        return;
+      }
+      toast("That doesn't look like a skin code — they start with SKIN1.");
+      return;
+    }
+    adoptSkin(got);
+  });
+}
+function adoptSkin(s) {
+  var saved = Skins.addMine(s);
+  applySkin(saved);
+  renderStudio();
+  toast("🎨 <b>" + esc(saved.name) + "</b> by " + esc(saved.maker) + " is now in your gallery.");
+}
+
 /* ===== overlays & menus ===== */
 function hideAllOverlays() {
-  ["ovMenu", "ovNew", "ovLink", "ovLinked", "ovPromo", "ovEnd", "ovSettings", "ovLearn", "ovOpenings", "ovAbout"].forEach(function (id) {
+  ["ovMenu", "ovNew", "ovLink", "ovLinked", "ovPromo", "ovEnd", "ovSettings", "ovLearn", "ovOpenings", "ovAbout", "ovAcademy"].forEach(function (id) {
     $(id).classList.add("hide");
   });
 }
 function showMenu() {
   stopTour();
+  closeStudio();
+  if (mode === "lesson") { lesson = null; mode = null; }
+  $("lessonBar").classList.add("hide"); document.body.classList.remove("lesson-on"); reflow();
   hideAllOverlays();
+  var lp = Learn.stats(Learn.load());
+  $("mAcademySub").textContent = lp.solved
+    ? "Learned " + lp.solved + " of " + lp.total + (lp.due ? " · " + lp.due + " due for review" : "")
+    : "Learn by doing — short positions, real feedback.";
   var s = loadSave();
   var hasLive = G && !over && mode && mode !== "tour";
   $("mResume").classList.toggle("hide", !s && !hasLive);
@@ -1413,16 +2253,30 @@ function syncAll() {
   syncBoard(); syncMoveList(); syncBars(); syncClocks(); syncTurnStrip(); syncButtons();
 }
 function syncButtons() {
+  syncOddsUI();
   $("undoLbl").textContent = mode === "lan" ? "Takeback" : "Undo";
   $("btnUndo").toggleAttribute("disabled", !G || !G.played.length || !!over || mode === "tour");
   $("btnHint").toggleAttribute("disabled", !G || !!over || mode === "tour");
   $("btnReplay").toggleAttribute("disabled", !G || !G.played.length);
 }
 
+/* the hint button says what it will cost before you press it */
+function syncOddsUI() {
+  var lbl = $("hintCost");
+  if (!lbl) return;
+  if (!G || over || mode === "lesson" || mode === "tour" || !canActNow()) {
+    lbl.textContent = ""; lbl.className = "hintCost"; return;
+  }
+  var o = oddsFor(G.turn);
+  lbl.textContent = oddsLabel(G.turn);
+  lbl.className = "hintCost " + o.mood;
+  lbl.title = o.why;
+}
+
 /* ===== settings ===== */
 function syncSettingsUI() {
-  $("thWalnut").classList.toggle("sel", prefs.theme === "walnut");
-  $("thSlate").classList.toggle("sel", prefs.theme === "slate");
+  $("setSkinName").textContent = "Currently: " + skin.name + " · " +
+    Skins.MATERIALS[skin.pieces.material].label.toLowerCase() + " pieces.";
   $("setCoach").classList.toggle("sel", prefs.coach);
   $("setCoach").textContent = prefs.coach ? "On" : "Off";
   $("setSound").classList.toggle("sel", prefs.sound);
@@ -1464,6 +2318,14 @@ function wireUI() {
   $("mLan").addEventListener("click", openLink);
   $("mOpenings").addEventListener("click", showOpenings);
   $("mLearn").addEventListener("click", function () { showLearn(0); });
+  $("mAcademy").addEventListener("click", openAcademy);
+  $("academyBack").addEventListener("click", showMenu);
+  $("aPractise").addEventListener("click", startPractice);
+  $("aNext").addEventListener("click", startNextLesson);
+  $("btnStudio").addEventListener("click", function () {
+    if (studioOpen) closeStudio(); else openStudio();
+  });
+  wireStudio();
   $("mSettings").addEventListener("click", function () { hideAllOverlays(); syncSettingsUI(); $("ovSettings").classList.remove("hide"); });
   $("mAbout").addEventListener("click", function () { hideAllOverlays(); $("ovAbout").classList.remove("hide"); });
   $("aboutBack").addEventListener("click", showMenu);
@@ -1491,8 +2353,7 @@ function wireUI() {
   $("endMenu").addEventListener("click", showMenu);
 
   /* settings */
-  $("thWalnut").addEventListener("click", function () { prefs.theme = "walnut"; savePrefs(); R2.setTheme("walnut"); if (R3) R3.setTheme("walnut"); syncSettingsUI(); needFrame(); });
-  $("thSlate").addEventListener("click", function () { prefs.theme = "slate"; savePrefs(); R2.setTheme("slate"); if (R3) R3.setTheme("slate"); syncSettingsUI(); needFrame(); });
+  $("setOpenStudio").addEventListener("click", function () { hideAllOverlays(); openStudio(); });
   $("setCoach").addEventListener("click", function () { prefs.coach = !prefs.coach; savePrefs(); syncSettingsUI(); });
   $("setSound").addEventListener("click", function () { prefs.sound = !prefs.sound; savePrefs(); syncSettingsUI(); if (prefs.sound) snd("link"); });
   $("setHelpers").addEventListener("click", function () { prefs.helpers = !prefs.helpers; savePrefs(); syncSettingsUI(); syncBoard(); });
@@ -1549,6 +2410,34 @@ function wireUI() {
   });
 }
 
+/* a skin link can arrive on first load, or be pasted into a tab that's
+   already open — both end up here. It is always an offer, never applied
+   behind your back. */
+function offerSharedSkin(delay) {
+  var m = location.hash.match(/#skin=(SKIN1\.[A-Za-z0-9_-]+)/);
+  if (!m) return false;
+  var shared = Skins.decode(m[1]);
+  history.replaceState(null, "", location.pathname);
+  if (!shared) { toast("That skin link looks damaged — ask for a fresh one."); return false; }
+  setTimeout(function () {
+    toast("🎨 <b>" + esc(shared.name) + "</b> — a board look from " + esc(shared.maker) + ". Try it?",
+      [{ label: "Use it", fn: function () { adoptSkin(shared); openStudio(); } },
+       { label: "No thanks", fn: function () {}, ghost: true }], 15000);
+  }, delay || 0);
+  return true;
+}
+function wireHashLinks() {
+  window.addEventListener("hashchange", function () {
+    if (offerSharedSkin(0)) return;
+    var j = location.hash.match(/#join=(CHESS(1|2)\.[A-Za-z0-9_-]+)/);
+    if (j) {
+      history.replaceState(null, "", location.pathname);
+      openLink();
+      joinFlow(j[1]);
+    }
+  });
+}
+
 /* ===== service worker: offline + the update whisper ===== */
 function wireSW() {
   if (!("serviceWorker" in navigator) || location.protocol === "file:") return;
@@ -1587,14 +2476,19 @@ function boot() {
   wireUI();
   lanHandlers();
   initRenderers();
+  applySkin(skin, false);
   wireInput();
   syncSettingsUI();
   wireSW();
+  wireHashLinks();
   G = Chess.create();          /* an idle board behind the menu */
   R.setPosition(G.board, { flourish: true });
   mode = null;
   syncAll();
   needFrame();
+
+  /* somebody shared a board look with you */
+  offerSharedSkin(1200);
 
   /* arriving by invite link? straight into the join flow */
   var joinM = location.hash.match(/#join=(CHESS(1|2)\.[A-Za-z0-9_-]+)/);
@@ -1614,6 +2508,16 @@ try { boot(); } catch (e) { panic(); throw e; }
 
 /* dev handle, in the house style */
 window.__cr = { get game() { return G; }, Chess: Chess, Book: Book, Net: Net,
+  Teach: Teach, Learn: Learn, Skins: Skins,
+  get skin() { return skin; }, applySkin: applySkin,
+  get lesson() { return lesson; }, startLesson: startLesson, openAcademy: openAcademy,
+  openStudio: openStudio, openLink: openLink, feedCode: feedCode,
+  scanSupported: scanSupported, commitMove: commitMove,
+  get lanNonce() { return lanNonce; }, get lanSide() { return lanSide; },
+  lead: lead, oddsFor: oddsFor, oddsNudge: oddsNudge, showMateNet: showMateNet,
+  get oddsSpent() { return oddsSpent; }, syncAll: syncAll,
+  clockMs: function (side) { return side === 1 ? clock.w : clock.b; },
+  oddsResetForTest: function () { oddsLastNudge = -99; teachSeen = {}; teachCool = 0; },
   get mode() { return mode; }, startGame: startGame, get renderer() { return R; },
   feedCode: feedCode, openLink: openLink };   /* the join flow's one door, for tests */
 })();

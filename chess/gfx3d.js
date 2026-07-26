@@ -16,18 +16,32 @@
 
 var REDUCED = (typeof matchMedia === "function") && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-var THEMES = {
-  walnut: { light: "#e9d9bd", dark: "#9d7350", rim: "#4a3227", margin: "#caa87c", coord: "#5d4433",
-            bg: [0.086, 0.075, 0.066], white: [0.93, 0.89, 0.80], black: [0.16, 0.15, 0.14],
-            whiteLine: null, selected: [0.98, 0.78, 0.30], legal: [0.30, 0.55, 0.36],
-            capt: [0.75, 0.28, 0.22], last: [0.96, 0.84, 0.44], check: [0.86, 0.24, 0.18],
-            hint: [0.16, 0.55, 0.36] },
-  slate:  { light: "#dde3ea", dark: "#7b8da4", rim: "#242b34", margin: "#aab6c4", coord: "#39424e",
-            bg: [0.055, 0.065, 0.08], white: [0.92, 0.94, 0.96], black: [0.17, 0.19, 0.23],
-            selected: [0.36, 0.62, 1.0], legal: [0.22, 0.42, 0.85],
-            capt: [0.78, 0.28, 0.24], last: [0.45, 0.65, 1.0], check: [0.86, 0.24, 0.18],
-            hint: [0.17, 0.38, 0.85] }
-};
+/* ---------- a skin, turned into what GL wants ----------
+   Colours arrive as hex from skins.js; the shader wants vec3s in 0..1,
+   and the board texture wants the hex back again. Derived once per skin
+   change rather than per frame. */
+function vec3(hex) {
+  var n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
+function derive(skin) {
+  var b = skin.board, p = skin.pieces, m = skin.marks;
+  var surf = (root.Skins && root.Skins.surface) ? root.Skins.surface(skin)
+           : { spec: 0.5, power: 34, rim: 0.1, alpha: 1, translucent: false };
+  return {
+    /* hex, for painting the board texture on a 2D canvas */
+    light: b.light, dark: b.dark, rim: b.rim, margin: b.edge, coord: b.coord,
+    pattern: b.pattern, grain: b.grain, gloss: b.gloss,
+    /* vec3, for the shader */
+    bg: vec3(b.light === b.dark ? "#101010" : skin.room.bg),
+    white: vec3(p.white), black: vec3(p.black), rimVec: vec3(b.rim),
+    selected: vec3(m.select), legal: vec3(m.legal), capt: vec3(m.capture),
+    last: vec3(m.last), check: vec3(m.check), hint: vec3(m.hint),
+    /* material */
+    spec: surf.spec, power: surf.power, rimLight: surf.rim,
+    alpha: surf.alpha, translucent: surf.translucent
+  };
+}
 
 /* ---------- tiny mat4 (column-major, like GL wants) ---------- */
 function mIdent() { return [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]; }
@@ -180,7 +194,8 @@ var VSH = [
   "}"].join("\n");
 var FSH = [
   "precision mediump float;",
-  "uniform vec3 uColor; uniform float uAlpha; uniform vec3 uEye; uniform float uFlat; uniform float uSpec;",
+  "uniform vec3 uColor; uniform float uAlpha; uniform vec3 uEye; uniform float uFlat;",
+  "uniform float uSpec; uniform float uPower; uniform float uRim;",
   "varying vec3 vNrm; varying vec3 vWorld;",
   "void main(){",
   "  if (uFlat > 0.5) { gl_FragColor = vec4(uColor, uAlpha); return; }",
@@ -190,8 +205,8 @@ var FSH = [
   "  float d = max(dot(N, L1), 0.0) * 0.75 + max(dot(N, L2), 0.0) * 0.30;",
   "  vec3 V = normalize(uEye - vWorld);",
   "  vec3 H = normalize(L1 + V);",
-  "  float sp = pow(max(dot(N, H), 0.0), 34.0) * uSpec;",
-  "  float rim = pow(1.0 - max(dot(N, V), 0.0), 2.5) * 0.10;",
+  "  float sp = pow(max(dot(N, H), 0.0), uPower) * uSpec;",
+  "  float rim = pow(1.0 - max(dot(N, V), 0.0), 2.5) * uRim;",
   "  vec3 c = uColor * (0.34 + d) + vec3(sp) + vec3(rim);",
   "  gl_FragColor = vec4(c, uAlpha);",
   "}"].join("\n");
@@ -206,15 +221,63 @@ var FSH_TEX = [
   "varying vec2 vUV;",
   "void main(){ gl_FragColor = texture2D(uTex, vUV); }"].join("\n");
 
-/* ---------- board texture (painted on an offscreen canvas) ---------- */
-function boardTexture(themeName) {
-  var th = THEMES[themeName], S = 1024, cv = document.createElement("canvas");
+/* ---------- board texture (painted on an offscreen canvas) ----------
+   The same five patterns the 2D board knows, so a skin looks like
+   itself whichever way you're playing. */
+function paintPattern(g, x, y, cell, dark, th, f, r) {
+  if (th.grain <= 0.02 || th.pattern === "plain") return;
+  var amt = th.grain, seed = (f * 73 + r * 131) % 97, i;
+  g.save();
+  g.beginPath(); g.rect(x, y, cell, cell); g.clip();
+  if (th.pattern === "wood") {
+    for (i = 0; i < 6; i++) {
+      var yy = y + ((seed * 7 + i * 23) % cell);
+      g.strokeStyle = (i % 2) ? "#000" : "#fff";
+      g.globalAlpha = (0.03 + amt * 0.10) * (i % 2 ? 1 : 0.7);
+      g.lineWidth = 2 + (i % 2) * 2;
+      g.beginPath();
+      g.moveTo(x, yy);
+      g.bezierCurveTo(x + cell * 0.3, yy + 5, x + cell * 0.7, yy - 5, x + cell, yy + 2);
+      g.stroke();
+    }
+  } else if (th.pattern === "marble") {
+    g.globalAlpha = 0.05 + amt * 0.14;
+    g.strokeStyle = dark ? "#fff" : "#000";
+    g.lineWidth = Math.max(2, cell * 0.02);
+    for (i = 0; i < 3; i++) {
+      var sx = x + ((seed * 11 + i * 37) % cell);
+      g.beginPath();
+      g.moveTo(sx, y);
+      g.bezierCurveTo(sx + cell * 0.35, y + cell * 0.3, sx - cell * 0.3, y + cell * 0.65, sx + cell * 0.2, y + cell);
+      g.stroke();
+    }
+  } else if (th.pattern === "linen") {
+    g.globalAlpha = 0.04 + amt * 0.10;
+    g.strokeStyle = dark ? "#fff" : "#000";
+    g.lineWidth = 1.5;
+    var step = Math.max(5, cell / 8);
+    for (var t = 0; t < cell; t += step) {
+      g.beginPath(); g.moveTo(x, y + t); g.lineTo(x + cell, y + t); g.stroke();
+      g.beginPath(); g.moveTo(x + t, y); g.lineTo(x + t, y + cell); g.stroke();
+    }
+  } else if (th.pattern === "inlay") {
+    g.globalAlpha = 0.25 + amt * 0.5;
+    g.strokeStyle = dark ? "#fff" : "#000";
+    g.lineWidth = Math.max(2, cell * 0.03);
+    g.strokeRect(x + cell * 0.08, y + cell * 0.08, cell * 0.84, cell * 0.84);
+  }
+  g.restore();
+}
+
+
+function boardTexture(th) {
+  var S = 1024, cv = document.createElement("canvas");
   cv.width = cv.height = S;
   var g = cv.getContext("2d");
   var margin = S * 0.055, cell = (S - margin * 2) / 8;
   g.fillStyle = th.margin; g.fillRect(0, 0, S, S);
   /* faint long grain in the margin */
-  g.globalAlpha = 0.10;
+  g.globalAlpha = 0.06 + th.grain * 0.10;
   for (var gy = 0; gy < S; gy += 7) {
     g.fillStyle = (gy % 3) ? "#000" : "#fff";
     g.fillRect(0, gy, S, 1.5);
@@ -223,15 +286,18 @@ function boardTexture(themeName) {
   for (var r = 0; r < 8; r++) for (var f = 0; f < 8; f++) {
     /* canvas row 0 is the top of the texture = rank 8 */
     var x = margin + f * cell, y = margin + r * cell;
-    g.fillStyle = ((f + (7 - r)) % 2 === 0) ? th.dark : th.light;
+    var isDark = ((f + (7 - r)) % 2 === 0);
+    g.fillStyle = isDark ? th.dark : th.light;
     g.fillRect(x, y, cell + 1, cell + 1);
-    /* soft per-square grain */
-    g.globalAlpha = 0.05;
-    for (var i = 0; i < 4; i++) {
-      g.fillStyle = i % 2 ? "#000" : "#fff";
-      g.fillRect(x, y + ((f * 13 + r * 29 + i * 17) % cell), cell, 1.2);
-    }
-    g.globalAlpha = 1;
+    paintPattern(g, x, y, cell, isDark, th, f, r);
+  }
+  if (th.gloss > 0.02) {
+    var gl2 = g.createLinearGradient(margin, margin, S - margin, S - margin);
+    gl2.addColorStop(0, "rgba(255,255,255," + (0.20 * th.gloss).toFixed(3) + ")");
+    gl2.addColorStop(0.45, "rgba(255,255,255,0)");
+    gl2.addColorStop(1, "rgba(0,0,0," + (0.16 * th.gloss).toFixed(3) + ")");
+    g.fillStyle = gl2;
+    g.fillRect(margin, margin, S - margin * 2, S - margin * 2);
   }
   g.fillStyle = th.coord;
   g.font = "600 " + Math.round(margin * 0.62) + "px system-ui, sans-serif";
@@ -251,9 +317,10 @@ function create(canvas, opts) {
   if (!gl) return null;
 
   var R = {
-    kind: "3d", themeName: "walnut", orientation: 1,
+    kind: "3d", skin: null, pal: null, orientation: 1,
     board: new Int8Array(128),
     hi: { selected: -1, legal: [], legalCapt: [], last: null, check: -1, hint: null },
+    lines: [], net: [],
     anim: null, drops: null, lost: false, dirty: true
   };
 
@@ -284,6 +351,7 @@ function create(canvas, opts) {
     model: gl.getUniformLocation(prog, "uModel"), color: gl.getUniformLocation(prog, "uColor"),
     alpha: gl.getUniformLocation(prog, "uAlpha"), eye: gl.getUniformLocation(prog, "uEye"),
     flat: gl.getUniformLocation(prog, "uFlat"), spec: gl.getUniformLocation(prog, "uSpec"),
+    power: gl.getUniformLocation(prog, "uPower"), rimLight: gl.getUniformLocation(prog, "uRim"),
     aPos: gl.getAttribLocation(prog, "aPos"), aNrm: gl.getAttribLocation(prog, "aNrm")
   };
   var UT = {
@@ -356,8 +424,9 @@ function create(canvas, opts) {
 
   var boardTex = gl.createTexture();
   function loadBoardTex() {
+    if (!R.pal) return;          /* nothing to paint until a skin arrives */
     gl.bindTexture(gl.TEXTURE_2D, boardTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, boardTexture(R.themeName));
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, boardTexture(R.pal));
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -415,9 +484,12 @@ function create(canvas, opts) {
     R.dirty = true;
   };
 
-  R.setTheme = function (name) {
-    if (!THEMES[name]) name = "walnut";
-    R.themeName = name;
+  R.setLines = function (list) { R.lines = list || []; R.dirty = true; };
+  R.setNet = function (squares) { R.net = squares || []; R.dirty = true; };
+
+  R.setSkin = function (skin) {
+    R.skin = skin;
+    R.pal = derive(skin);
     loadBoardTex();
     R.dirty = true;
   };
@@ -498,26 +570,94 @@ function create(canvas, opts) {
     var s = SCALE[kind] * (scaleMul || 1);
     /* knights face the opponent */
     var ry = kind === 2 ? (white ? Math.PI / 2 : -Math.PI / 2) : 0;
-    var al = alpha == null ? 1 : alpha;
+    var al = (alpha == null ? 1 : alpha) * th.alpha;
     /* shadow stays on the ground, thins as the piece lifts */
     gl.enable(gl.BLEND);
     gl.depthMask(false);
     bindMesh(MESH_DISC);
-    drawMesh(MESH_DISC, mModel(x, 0.012, z, 0.36 * s, 0), [0, 0, 0], 0.24 * al / (1 + Math.max(0, yLift) * 1.6), true);
-    gl.depthMask(true);
-    if (al >= 1) gl.disable(gl.BLEND);
+    drawMesh(MESH_DISC, mModel(x, 0.012, z, 0.36 * s, 0), [0, 0, 0],
+      0.24 * al / (1 + Math.max(0, yLift) * 1.6), true);
+    if (al >= 1) { gl.depthMask(true); gl.disable(gl.BLEND); }
     bindMesh(mesh);
     drawMesh(mesh, mModel(x, yLift || 0, z, s, ry),
-      white ? th.white : th.black, al, false, white ? 0.5 : 0.9);
+      white ? th.white : th.black, al, false, th.spec);
+    gl.depthMask(true);
     gl.disable(gl.BLEND);
+  }
+
+  /* See-through materials (glass) need painting far-to-near or the
+     pieces behind vanish. Opaque sets skip all this and draw as they
+     come, which is every skin but one. */
+  var pending = [];
+  function queuePiece(piece, x, z, yLift, alpha, scaleMul, th) {
+    if (!th.translucent) { drawPiece(piece, x, z, yLift, alpha, scaleMul, th); return; }
+    var dx = x - cam.eye[0], dy = (yLift || 0) - cam.eye[1], dz = z - cam.eye[2];
+    pending.push({ p: piece, x: x, z: z, y: yLift, a: alpha, s: scaleMul,
+                   d: dx * dx + dy * dy + dz * dz });
+  }
+  function flushPieces(th) {
+    if (!pending.length) return;
+    pending.sort(function (a, b) { return b.d - a.d; });
+    for (var i = 0; i < pending.length; i++) {
+      var q = pending[i];
+      drawPiece(q.p, q.x, q.z, q.y, q.a, q.s, th);
+    }
+    pending.length = 0;
   }
 
   function drawFlatSq(sq, color, alpha, mesh, scale, y) {
     drawMesh(mesh || MESH_QUAD, mModel(sqX(sq), y || 0.015, sqZ(sq), scale || 0.98, 0), color, alpha, true);
   }
 
-  /* dynamic arrow mesh for hints */
+  /* dynamic meshes: hint arrows, and the racing lines */
   var arrowBuf = gl.createBuffer(), arrowIdx = gl.createBuffer();
+  var lineBuf = gl.createBuffer(), lineIdx = gl.createBuffer();
+
+  /* One racing line, flat on the board. The ribbon comes back as a
+     polygon whose first half is the left edge and second half the right
+     edge reversed, so it triangulates as a strip without any clever
+     geometry — and the arrowhead is simply one more triangle. */
+  function drawLine(spec, now, th) {
+    var a = { x: sqX(spec.from), y: sqZ(spec.from) };
+    var b = { x: sqX(spec.to), y: sqZ(spec.to) };
+    var L = root.Lines.build(a, b, { kind: spec.kind, scale: 1, knight: spec.knight, alpha: spec.alpha });
+    var colour = spec.colour ||
+      (spec.kind === "threat" ? th.capt : spec.kind === "lane" ? th.last : th.hint);
+    var half = L.poly.length / 2, verts = [], idx = [], i;
+    for (i = 0; i < half; i++) {
+      var l = L.poly[i], r = L.poly[L.poly.length - 1 - i];
+      verts.push(l.x, 0.03, l.y, 0, 1, 0);
+      verts.push(r.x, 0.03, r.y, 0, 1, 0);
+    }
+    for (i = 0; i < half - 1; i++) {
+      var v = i * 2;
+      idx.push(v, v + 1, v + 2, v + 1, v + 3, v + 2);
+    }
+    if (L.head) {
+      var base = verts.length / 6;
+      for (i = 0; i < 3; i++) verts.push(L.head[i].x, 0.03, L.head[i].y, 0, 1, 0);
+      idx.push(base, base + 1, base + 2);
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, lineBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(U.aPos);
+    gl.vertexAttribPointer(U.aPos, 3, gl.FLOAT, false, 24, 0);
+    gl.enableVertexAttribArray(U.aNrm);
+    gl.vertexAttribPointer(U.aNrm, 3, gl.FLOAT, false, 24, 12);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, lineIdx);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(idx), gl.DYNAMIC_DRAW);
+    gl.uniformMatrix4fv(U.model, false, mIdent());
+    gl.uniform3fv(U.color, colour);
+    gl.uniform1f(U.alpha, L.alpha);
+    gl.uniform1f(U.flat, 1);
+    gl.drawElements(gl.TRIANGLES, idx.length, gl.UNSIGNED_SHORT, 0);
+
+    /* the spark: a small bright disc riding the line */
+    var sp = root.Lines.sparkAt(L.pts, root.Lines.phase(L, now));
+    bindMesh(MESH_DISC);
+    drawMesh(MESH_DISC, mModel(sp.x, 0.045, sp.y, 0.17, 0), [1, 1, 1], 0.95 * L.alpha, true);
+    drawMesh(MESH_DISC, mModel(sp.x, 0.04, sp.y, 0.30, 0), colour, 0.45 * L.alpha, true);
+  }
   function drawArrow(from, to, color) {
     var x0 = sqX(from), z0 = sqZ(from), x1 = sqX(to), z1 = sqZ(to);
     var dx = x1 - x0, dz = z1 - z0, len = Math.hypot(dx, dz);
@@ -552,7 +692,8 @@ function create(canvas, opts) {
 
   R.frame = function () {
     if (R.lost) return false;
-    var th = THEMES[R.themeName];
+    var th = R.pal;
+    if (!th) return false;
     /* camera springs */
     var moving = false;
     var k = REDUCED ? 1 : 0.14;
@@ -574,9 +715,16 @@ function create(canvas, opts) {
     }
     if (!R.dirty && !moving && !animating && !dropping) return false;
 
-    var ex = Math.cos(cam.yaw) * Math.cos(cam.pitch) * cam.dist;
-    var ey = Math.sin(cam.pitch) * cam.dist;
-    var ez = Math.sin(cam.yaw) * Math.cos(cam.pitch) * cam.dist;
+    /* A narrow canvas (phone, or the Studio drawer taking a slice) has a
+       small horizontal field of view, so the camera steps back far enough
+       to keep all eight files on screen. The player's own zoom is left
+       alone — this only ever adds distance, never removes it. */
+    var aspect = canvas.width / canvas.height;
+    var fit = aspect < 1.25 ? Math.min(2.4, 1.25 / Math.max(0.35, aspect)) : 1;
+    var dist = cam.dist * fit;
+    var ex = Math.cos(cam.yaw) * Math.cos(cam.pitch) * dist;
+    var ey = Math.sin(cam.pitch) * dist;
+    var ez = Math.sin(cam.yaw) * Math.cos(cam.pitch) * dist;
     cam.eye = [ex, ey, ez];
     proj = mPersp(0.72, canvas.width / canvas.height, 0.5, 80);
     view = mLookAt(cam.eye, camTarget(), [0, 1, 0]);
@@ -592,6 +740,8 @@ function create(canvas, opts) {
     gl.uniformMatrix4fv(U.proj, false, proj);
     gl.uniformMatrix4fv(U.view, false, view);
     gl.uniform3fv(U.eye, cam.eye);
+    gl.uniform1f(U.power, th.power);
+    gl.uniform1f(U.rimLight, th.rimLight);
     bindMesh(MESH_RIM);
     drawMesh(MESH_RIM, mModel(0, -0.002, 0, 1, 0), hexToVec(th.rim), 1, false, 0.12);
 
@@ -629,7 +779,18 @@ function create(canvas, opts) {
     for (var ci = 0; ci < R.hi.legalCapt.length; ci++) {
       drawMesh(MESH_RING, mModel(sqX(R.hi.legalCapt[ci]), 0.02, sqZ(R.hi.legalCapt[ci]), 0.46, 0), th.capt, 0.6, true);
     }
-    if (R.hi.hint) drawArrow(R.hi.hint[0], R.hi.hint[1], th.hint);
+    if (R.hi.hint && !R.lines.length) drawArrow(R.hi.hint[0], R.hi.hint[1], th.hint);
+    /* the mate net: squares the king can't use */
+    if (R.net.length) {
+      bindMesh(MESH_RING);
+      for (var nn = 0; nn < R.net.length; nn++) {
+        drawMesh(MESH_RING, mModel(sqX(R.net[nn]), 0.022, sqZ(R.net[nn]), 0.34, 0), th.capt, 0.5, true);
+      }
+    }
+    if (R.lines.length && root.Lines) {
+      var lnow = performance.now();
+      for (var ll = 0; ll < R.lines.length; ll++) drawLine(R.lines[ll], lnow, th);
+    }
     gl.depthMask(true);
     gl.disable(gl.BLEND);
 
@@ -654,7 +815,7 @@ function create(canvas, opts) {
         lift = (1 - ease(t)) * 2.2;
         alph = Math.min(1, t * 2);
       }
-      drawPiece(piece, sqX(sq), sqZ(sq), lift, alph, 1, th);
+      queuePiece(piece, sqX(sq), sqZ(sq), lift, alph, 1, th);
     }
 
     if (a) {
@@ -663,16 +824,16 @@ function create(canvas, opts) {
       if (captPiece) {
         var cx = a.m.epSq != null ? sqX(a.m.epSq) : sqX(a.m.to);
         var cz = a.m.epSq != null ? sqZ(a.m.epSq) : sqZ(a.m.to);
-        drawPiece(captPiece, cx, cz, -0.9 * e, 1 - e, 1 - 0.2 * e, th); /* sinks through the board */
+        queuePiece(captPiece, cx, cz, -0.9 * e, 1 - e, 1 - 0.2 * e, th); /* sinks through the board */
       }
       if (a.m.rookFrom != null) {
-        drawPiece(a.after[a.m.rookTo],
+        queuePiece(a.after[a.m.rookTo],
           sqX(a.m.rookFrom) + (sqX(a.m.rookTo) - sqX(a.m.rookFrom)) * e,
           sqZ(a.m.rookFrom) + (sqZ(a.m.rookTo) - sqZ(a.m.rookFrom)) * e, 0, 1, 1, th);
       }
       var mover = e > 0.75 && a.m.promo ? a.m.promo : a.m.piece;
       var hop = Math.abs(a.m.piece) === 2 ? Math.sin(aprog * Math.PI) * 0.55 : Math.sin(aprog * Math.PI) * 0.06;
-      drawPiece(mover,
+      queuePiece(mover,
         sqX(a.m.from) + (sqX(a.m.to) - sqX(a.m.from)) * e,
         sqZ(a.m.from) + (sqZ(a.m.to) - sqZ(a.m.from)) * e, hop, 1, 1, th);
       if (!animating) {
@@ -682,7 +843,9 @@ function create(canvas, opts) {
       }
     }
 
-    R.dirty = animating || moving || dropping;
+    flushPieces(th);
+
+    R.dirty = animating || moving || dropping || R.lines.length > 0;
     return R.dirty;
   };
 
@@ -691,7 +854,7 @@ function create(canvas, opts) {
   return R;
 }
 
-var Gfx3D = { create: create, THEMES: THEMES };
+var Gfx3D = { create: create, derive: derive };
 if (typeof module !== "undefined" && module.exports) module.exports = Gfx3D;
 else root.Gfx3D = Gfx3D;
 })(typeof self !== "undefined" ? self : this);
