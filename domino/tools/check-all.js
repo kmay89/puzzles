@@ -13,6 +13,7 @@ var QUICK = process.argv.indexOf("--quick") >= 0;
 var CHECKS = [
   ["rules-check.js", [], "the rules"],
   ["layout-check.js", [], "the table geometry"],
+  ["bone-check.js", [], "the shape of a bone"],
   ["skin-check.js", [], "the settings"],
   ["net-check.js", [], "the link"],
   ["coach-check.js", [], "the coach"],
