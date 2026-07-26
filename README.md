@@ -8,9 +8,9 @@ display: God's algorithm, Kociemba's two-phase algorithm, a map of every
 position, a live statistical engine, a camera scanner, a patient
 turn-by-turn teacher, a sequence lab, and an augmented-reality door.
 Next door, chess taught kindly, sudoku that shows how its puzzles are
-made and teaches the nineteen techniques that solve them, a domino table
-where four phones make one game, and a library you can walk through a
-block at a time.
+made and teaches the nineteen techniques that solve them, dominoes on a
+table of four chairs, cantina style, and a library you can walk through
+a block at a time.
 
 **Live:** <https://kmay89.github.io/puzzles/>
 
@@ -33,15 +33,16 @@ sudoku/       the sudoku room — puzzles forged in front of you, five
               nineteen techniques taught from real positions, and a hint
               button that explains instead of telling
               (see sudoku/README.md)
+domino/       the domino table — dominoes on a table of four chairs,
+              cantina style: two parejas, a 3D table, an opponent that
+              counts the bones and hears every pass, and four phones
+              joined by holding them up to each other
+              (see domino/README.md)
 library/      the reading room — a voxel engine written from scratch:
               walk an original library about press freedom, or drop in
               a Minecraft world of your own and explore it. Reads NBT
               and Anvil region files; ships no game code or assets
               (see library/README.md)
-domino/       the domino table — Mexican dominoes, four seats and two
-              parejas: a 3D table, an opponent that counts the bones and
-              hears every pass, and four phones joined by holding them
-              up to each other (see domino/README.md)
 og.png        the social preview
 .nojekyll     serve files exactly as they are
 ```

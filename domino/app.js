@@ -67,6 +67,7 @@ function toast(msg) {
 var SAVE = "dominotable.v1";
 var P = {
   name: "", skin: null, view3d: true, level: "compadre",
+  pace: "relaxed",
   rules: { target: 100, capicua: 25, countAll: false, trancaTie: "closer", firstSalida: "mula" },
   seen: {}, coach: true
 };
@@ -77,6 +78,7 @@ function load() {
       P.name = Net.cleanName(raw.name || "");
       P.view3d = raw.view3d !== false;
       P.level = AI.LEVELS[raw.level] ? raw.level : "compadre";
+      P.pace = PACES[raw.pace] ? raw.pace : "relaxed";
       P.coach = raw.coach !== false;
       P.seen = raw.seen || {};
       if (raw.rules) P.rules = R.houseRules(raw.rules);
@@ -89,7 +91,7 @@ function load() {
 function save() {
   try {
     localStorage.setItem(SAVE, JSON.stringify({
-      v: 1, name: P.name, skin: P.skin, view3d: P.view3d, level: P.level,
+      v: 1, name: P.name, skin: P.skin, view3d: P.view3d, level: P.level, pace: P.pace,
       rules: P.rules, seen: P.seen, coach: P.coach
     }));
   } catch (e) { /* private browsing; the game still plays */ }
@@ -103,6 +105,8 @@ var G = {
   mySeat: 0,
   names: { 0: "You", 1: "Beto", 2: "Lupe", 3: "Chuy" },
   sel: null,            /* the bone lifted out of your hand */
+  thinking: -1,         /* which seat is deciding, so the table can see  */
+  lastNote: null,       /* what just happened, in a few words            */
   anim: null,
   busy: false,
   hintOn: false,
@@ -321,6 +325,7 @@ function doPlay(seat, mv) {
   if (st.error) { toast(st.error); st.error = null; return false; }
   startAnim(fromIdx, seat);
   G.lastIdx = fromIdx;
+  note(seat, nameOf(seat) + " played the " + C.boneName(mv.tile));
   afterMove();
   return true;
 }
@@ -331,6 +336,7 @@ function doPass(seat) {
   R.pass(st);
   if (st.error) { st.error = null; return false; }
   sayMoment({ k: "pass", seat: seat, you: G.mySeat, ends: [st.left, st.right] });
+  note(seat, nameOf(seat) + " · ¡paso!");
   banner("¡Paso!", nameOf(seat) + " can't play", 900);
   afterMove();
   return true;
@@ -356,36 +362,72 @@ function afterMove() {
   syncAll();
   if (G.st.over) { setTimeout(endHand, 620); return; }
   if (G.mode === "host") Net.dealViews(G.st, { turn: G.st.turn, last: G.lastIdx });
-  scheduleTurn();
+  /* beat three: a pause to look at what just landed. The bone's own
+     animation runs ~340ms, so starting the next player's thinking
+     immediately means the table never rests — which is what made three
+     machines feel like one blur. */
+  clearTimeout(turnT);
+  turnT = setTimeout(scheduleTurn, pace().settle);
+}
+
+/* what just happened, in a few words under the seat strip. The point of
+   the room is that you can read the table; that starts with being able
+   to see who did what. */
+function note(seat, text) {
+  G.lastNote = { seat: seat, text: text };
+  syncAll();
 }
 
 /* whose turn, and what happens next */
+/* ---------- the pace of a hand ----------
+   Three players moving as fast as a machine can decide is not a game you
+   can follow — bones appear on the table and you are left working out
+   backwards who put them there. A table has a rhythm: somebody thinks,
+   somebody plays, everybody looks at it, the next one starts.
+
+   So a turn is three beats rather than one timeout. The seat whose turn
+   it is says so before anything happens, the play lands, and there is a
+   pause afterwards to look at what landed before the next player starts
+   thinking. `PACE` scales all three together. */
+var PACES = {
+  relaxed: { id: "relaxed", label: "Relaxed", note: "A beat to see each play land.", think: 900, spread: 700, settle: 750 },
+  brisk:   { id: "brisk",   label: "Brisk",   note: "The usual pace of a table in a hurry.", think: 520, spread: 420, settle: 380 },
+  quick:   { id: "quick",   label: "Quick",   note: "For when you just want the hand over.", think: 200, spread: 160, settle: 120 }
+};
+function pace() { return PACES[P.pace] || PACES.relaxed; }
+
 var turnT = 0;
 function scheduleTurn() {
   clearTimeout(turnT);
   var st = G.st;
   if (!st || st.over) return;
   var seat = st.turn;
+  G.thinking = -1;
+
   if (isHuman(seat)) {
     if (!R.canPlay(st, seat)) {
       /* a human who cannot play still has to say it out loud — but
          making them tap a button they have no choice about is theatre,
          so it is said for them after a beat */
-      turnT = setTimeout(function () { doPass(seat); }, 850);
+      turnT = setTimeout(function () { doPass(seat); }, pace().think);
     }
     syncAll();
     return;
   }
-  /* a machine at the table thinks for a moment, because instant play
-     reads as a machine rather than as a player */
-  var think = 420 + Math.random() * 520;
+
+  /* beat one: this seat is thinking, and the table can see who */
+  var p = pace();
+  G.thinking = seat;
+  syncAll();
   turnT = setTimeout(function () {
     if (!G.st || G.st.over || G.st.turn !== seat) return;
+    G.thinking = -1;
+    /* beat two: the play */
     if (!R.canPlay(G.st, seat)) { doPass(seat); return; }
     var v = R.publicView(G.st, seat);
     var a = AI.analyse(v, { level: P.level });
     if (a.move) doPlay(seat, a.move); else doPass(seat);
-  }, think);
+  }, p.think + Math.random() * p.spread);
 }
 function isHuman(seat) {
   if (G.mode === "solo") return seat === 0;
@@ -586,12 +628,23 @@ function syncAll() {
     var us = R.team(s) === R.team(G.mySeat);
     var bot = !isHuman(s) && G.mode !== "guest";
     html += "<div class='seat " + (us ? "us" : "them") + (s === v.turn ? " turn" : "") +
-      (s === G.mySeat ? " you" : "") + (bot ? " bot" : "") + "'>" +
+      (s === G.mySeat ? " you" : "") + (bot ? " bot" : "") +
+      (s === G.thinking ? " thinking" : "") + "'>" +
       "<span class='dot'></span><span class='nm'>" + esc(nameOf(s)) +
       (rel === 2 ? " ·" : "") + "</span>" +
       "<span class='bones'>" + v.counts[s] + "</span></div>";
   }
   $("seats").innerHTML = html;
+
+  /* the running commentary: who is deciding, and what they just did */
+  var ln = $("lastPlay");
+  if (G.thinking >= 0) {
+    ln.textContent = nameOf(G.thinking) + " is thinking…";
+    ln.className = "thinking";
+  } else if (G.lastNote) {
+    ln.textContent = G.lastNote.text;
+    ln.className = R.team(G.lastNote.seat) === R.team(G.mySeat) ? "us" : "them";
+  } else { ln.textContent = ""; ln.className = ""; }
 
   /* the score */
   var us2 = R.team(G.mySeat);
@@ -656,13 +709,17 @@ var RULE_FORM = [
   { k: "capicua", label: "Capicúa pays", opts: [[0, "nothing"], [25, "25 — the usual"], [50, "50"]] },
   { k: "countAll", label: "The winner counts", opts: [[false, "the other side's bones"], [true, "everyone's, partner included"]] },
   { k: "trancaTie", label: "A tied shut game", opts: [["closer", "goes to whoever shut it"], ["nobody", "goes to nobody"]] },
-  { k: "level", label: "The others play", opts: [["novato", "Novato"], ["compadre", "Compadre"], ["maestro", "Maestro"], ["cabron", "Cabrón"]] }
+  { k: "level", label: "The others play", opts: [["novato", "Novato"], ["compadre", "Compadre"], ["maestro", "Maestro"], ["cabron", "Cabrón"]] },
+  { k: "pace", label: "The table moves", opts: [["relaxed", "Relaxed"], ["brisk", "Brisk"], ["quick", "Quick"]] }
 ];
 function showRules() {
   var html = "";
   for (var i = 0; i < RULE_FORM.length; i++) {
     var f = RULE_FORM[i];
-    var cur = f.k === "level" ? P.level : P.rules[f.k];
+    /* level and pace are preferences, not house rules — they live on P
+       itself rather than in P.rules, and reading them out of P.rules
+       leaves the row with nothing lit up */
+    var cur = f.k === "level" ? P.level : f.k === "pace" ? P.pace : P.rules[f.k];
     html += "<div class='fld'><label><b>" + esc(f.label) + "</b></label><div class='opts'>";
     for (var j = 0; j < f.opts.length; j++) {
       var o = f.opts[j];
@@ -671,7 +728,7 @@ function showRules() {
     }
     html += "</div></div>";
   }
-  html += "<p class='note'>" + esc(AI.level(P.level).note) + "</p>";
+  html += "<p class='note'>" + esc(AI.level(P.level).note) + " · " + esc(pace().note) + "</p>";
   $("rulesForm").innerHTML = html;
   var btns = $("rulesForm").querySelectorAll("[data-rk]");
   for (var b = 0; b < btns.length; b++) press(btns[b], onRulePick);
@@ -681,6 +738,7 @@ function onRulePick(e) {
   var el = e.currentTarget || e.target;
   var k = el.getAttribute("data-rk"), raw = el.getAttribute("data-rv");
   if (k === "level") P.level = raw;
+  else if (k === "pace") P.pace = PACES[raw] ? raw : "relaxed";
   else if (k === "countAll") P.rules.countAll = (raw === "true");
   else if (k === "trancaTie") P.rules.trancaTie = raw;
   else P.rules[k] = parseInt(raw, 10);
@@ -1069,6 +1127,10 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
 
 /* the room's own handles, for the smoke tests and for anyone curious */
 window.__dt = function () {
-  return { G: G, P: P, gfx: gfx, scene: scene, Net: Net };
+  /* `tryPlay` and `doPass` are here for `tools/room-check.js`, which
+     needs to keep a hand moving while it times the machines' beats —
+     it is the player's turn a quarter of the time and the room is quite
+     right to sit and wait, but a stalled window measures nothing. */
+  return { G: G, P: P, gfx: gfx, scene: scene, Net: Net, tryPlay: tryPlay, doPass: doPass };
 };
 })();

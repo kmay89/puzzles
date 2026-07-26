@@ -28,6 +28,14 @@ what a capicúa pays, whether the winner counts their partner's bones,
 who takes a tied tranca, what you play to. The defaults are the common
 Mexican cantina set.
 
+**The table has a rhythm**, and that is a setting too. Three machines
+deciding as fast as a machine can decide is not a game you can follow:
+bones appear and you are left working out backwards who put them there.
+So a turn is three beats rather than one pause — the seat whose turn it
+is says it is thinking, the bone lands, and there is a moment to look at
+it before the next player starts. *Relaxed* is the default; *Brisk* is a
+table in a hurry, *Quick* is for when you just want the hand over.
+
 No spinner and no branching. The line has two ends and only ever two
 ends; doubles lie crosswise because that is how they lie, not because
 they open a third road. Branching belongs to the five-up family — a
@@ -127,6 +135,17 @@ containing the word *passed* must be backed by a pass in the record.
   600 rollouts scored no better than 220 — the signature of a search
   with nothing to search with. A policy that goes blind again shows up
   there as a flat 50%, whatever the sample count.
+- **A bone is checked for being a solid object.** `bone-check.js` walks
+  the mesh in node — no WebGL involved — and checks each quad's corner
+  order against its own normal: walking the corners must wind
+  anticlockwise seen from the side the normal points. All eight side and
+  chamfer quads were wound backwards, so back-face culling threw away
+  exactly the faces meant to be seen and kept the ones meant to be
+  hidden. From directly above a bone still looked like a bone; from the
+  table's angle you saw *through* its edges into the far inner wall, as
+  grey wedges hanging off both ends at once. Both ends is the tell —
+  impossible for a solid box under any light, so the fault had to be
+  winding rather than shading.
 - **The room is opened and played by a real browser.** `room-check.js`
   drives headless Chromium through the first two minutes — start a
   match, tap a bone, take a hint, change the colours, switch renderers,
@@ -159,6 +178,7 @@ or one at a time:
 ```
 node domino/tools/rules-check.js     # the rules, and the line rebuilt from the log
 node domino/tools/layout-check.js    # no overlaps, nothing moves, the hand stays tappable
+node domino/tools/bone-check.js      # the 3D bone is a solid, and wound the right way out
 node domino/tools/skin-check.js      # presets, share codes, hostile input
 node domino/tools/net-check.js       # the permutation test: hands stay secret
 node domino/tools/coach-check.js     # every hint names its move and tells the truth
