@@ -155,6 +155,41 @@ var VARIED = "(() => { const c = document.getElementById('table');" +
   ok("the hand plays on by itself", played >= 2, played + " bones down");
   ok("and nothing has thrown", errors.length === 0, errors.slice(0, 3).join(" | "));
 
+  /* ---------- a tap on the 3D table lands where it looks ----------
+     `pointOnTable` inverts the view-projection to turn a pixel back
+     into a place on the felt. It went untested at first, and it was
+     wrong the whole time: the matrix helper multiplied its arguments in
+     the reverse order, which the drawing never noticed (the shader
+     multiplies proj and view itself) but which sent every tap on an end
+     to the wrong spot. Nothing on screen looked amiss. */
+  var aim = await page.evaluate(
+    "(()=>{const d=window.__dt(); if(d.gfx.kind!=='3d') return null;" +
+    "const c=d.gfx.lastCam; if(!c) return null;" +
+    "const at=(fx,fy)=>{const p=d.gfx.pointOnTable(d.gfx.w*fx, d.gfx.h*fy); return p?[p.x,p.y]:null;};" +
+    "return {mid:at(0.5,0.5), left:at(0.2,0.5), right:at(0.8,0.5), up:at(0.5,0.3)," +
+    " cx:c.cx, cy:c.cy};})()");
+  ok("the middle of the screen unprojects onto the table", !!(aim && aim.mid));
+  if (aim && aim.mid && aim.left && aim.right && aim.up) {
+    ok("and lands where the camera is looking",
+       Math.hypot(aim.mid[0] - aim.cx, aim.mid[1] - aim.cy) < 1.5,
+       "off by " + Math.hypot(aim.mid[0] - aim.cx, aim.mid[1] - aim.cy).toFixed(2));
+
+    /* The check that actually bites. A reversed matrix product does not
+       shift the answer a little — it collapses it, and *every* pixel
+       comes back as the same point on the felt. That is invisible to a
+       tolerance test around the centre (the collapsed point sits near
+       the middle anyway, which is how the first version of this check
+       passed against the bug it was written for). Distinct pixels
+       landing in distinct places is the property that cannot survive
+       it. */
+    var spreadX = Math.abs(aim.right[0] - aim.left[0]);
+    var spreadY = Math.abs(aim.up[1] - aim.mid[1]);
+    ok("and taps to the left and right land apart", spreadX > 2,
+       "only " + spreadX.toFixed(2) + " apart");
+    ok("as do taps nearer and further up the table", spreadY > 0.5,
+       "only " + spreadY.toFixed(2) + " apart");
+  }
+
   /* ---------- the panels ---------- */
   await page.click("#btnHint");
   await page.waitForTimeout(300);

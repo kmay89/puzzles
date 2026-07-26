@@ -31,10 +31,21 @@ var Sk = (typeof require === "function" && typeof module !== "undefined")
 
 /* ---------- just enough matrix maths ---------- */
 function m4() { return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]); }
+/* a·b, in that order.
+
+   The obvious-looking loop computes b·a instead, and nothing complains.
+   The drawing never noticed, because the shader multiplies uProj and
+   uView itself — but `pointOnTable` inverts this product to turn a tap
+   back into a place on the table, and inverting the wrong product put
+   every tap somewhere else. Column-major means (row r, col c) lives at
+   m[c*4 + r], so (a·b)[r][c] = Σk a[k*4 + r] · b[c*4 + k]. */
 function mul(a, b, o) {
   o = o || new Float32Array(16);
-  for (var i = 0; i < 4; i++) for (var j = 0; j < 4; j++) {
-    o[i * 4 + j] = a[i * 4] * b[j] + a[i * 4 + 1] * b[4 + j] + a[i * 4 + 2] * b[8 + j] + a[i * 4 + 3] * b[12 + j];
+  for (var c = 0; c < 4; c++) {
+    for (var r = 0; r < 4; r++) {
+      o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] +
+                     a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3];
+    }
   }
   return o;
 }
