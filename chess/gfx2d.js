@@ -228,6 +228,7 @@ function create(canvas) {
     orientation: 1,             /* 1 = white at the bottom */
     board: new Int8Array(128),
     hi: { selected: -1, legal: [], legalCapt: [], last: null, check: -1, hint: null },
+    lines: [], net: [],
     anim: null,                 /* the move in flight */
     size: 0, cell: 0, ox: 0, oy: 0, dirty: true
   };
@@ -385,6 +386,11 @@ function create(canvas) {
             Math.min(2.5, window.devicePixelRatio || 1)].join("|");
   }
 
+  /* the racing lines: a small list of {from,to,kind}. They animate, so
+     while any exist the renderer keeps asking for frames. */
+  R.setLines = function (list) { R.lines = list || []; R.dirty = true; };
+  R.setNet = function (squares) { R.net = squares || []; R.dirty = true; };
+
   R.setSkin = function (skin) {
     R.skin = skin;
     R.pal = derive(skin);
@@ -524,11 +530,76 @@ function create(canvas) {
       ctx.beginPath(); ctx.arc(cp.x, cp.y, R.cell * 0.42, 0, Math.PI * 2); ctx.stroke();
     }
 
-    if (R.hi.hint) arrow(R.hi.hint[0], R.hi.hint[1], th.hint, 0.8);
+    /* the mate net: squares the king cannot use, marked rather than drawn
+       as a curve — a net is a place, not a direction */
+    if (R.net.length) {
+      ctx.save();
+      ctx.strokeStyle = th.ring;
+      ctx.lineWidth = Math.max(1.5, R.cell * 0.045);
+      ctx.globalAlpha = 0.5;
+      for (var ni = 0; ni < R.net.length; ni++) {
+        var np = sqXY(R.net[ni]), q = R.cell * 0.19;
+        ctx.beginPath();
+        ctx.moveTo(np.x - q, np.y - q); ctx.lineTo(np.x + q, np.y + q);
+        ctx.moveTo(np.x + q, np.y - q); ctx.lineTo(np.x - q, np.y + q);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    /* the lines themselves */
+    if (R.lines.length && root.Lines) {
+      var now = performance.now();
+      for (var li2 = 0; li2 < R.lines.length; li2++) {
+        drawLine(R.lines[li2], now, th);
+      }
+      animating = true;                 /* keep the spark moving */
+    }
+    if (R.hi.hint && !R.lines.length) arrow(R.hi.hint[0], R.hi.hint[1], th.hint, 0.8);
 
     R.dirty = animating;
     return animating;
   };
+
+  /* one racing line: a tapered ribbon, an arrowhead, and a spark that
+     travels it so the eye is pulled the way the idea moves */
+  function drawLine(spec, now, th) {
+    var a = sqXY(spec.from), b = sqXY(spec.to);
+    var colour = spec.colour ||
+      (spec.kind === "threat" ? th.ring : spec.kind === "lane" ? th.lastA : th.hint);
+    var L = root.Lines.build(a, b, {
+      kind: spec.kind, scale: R.cell, knight: spec.knight, alpha: spec.alpha
+    });
+    ctx.save();
+    ctx.globalAlpha = L.alpha;
+    ctx.fillStyle = colour;
+    ctx.shadowColor = colour;
+    ctx.shadowBlur = R.cell * 0.35 * L.glow;
+    ctx.beginPath();
+    ctx.moveTo(L.poly[0].x, L.poly[0].y);
+    for (var i = 1; i < L.poly.length; i++) ctx.lineTo(L.poly[i].x, L.poly[i].y);
+    ctx.closePath();
+    ctx.fill();
+    if (L.head) {
+      ctx.beginPath();
+      ctx.moveTo(L.head[0].x, L.head[0].y);
+      ctx.lineTo(L.head[1].x, L.head[1].y);
+      ctx.lineTo(L.head[2].x, L.head[2].y);
+      ctx.closePath();
+      ctx.fill();
+    }
+    var sp = root.Lines.sparkAt(L.pts, root.Lines.phase(L, now));
+    var gr = ctx.createRadialGradient(sp.x, sp.y, 0, sp.x, sp.y, R.cell * 0.26);
+    gr.addColorStop(0, "rgba(255,255,255,.95)");
+    gr.addColorStop(0.45, colour);
+    gr.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.globalAlpha = 0.9 * L.alpha;
+    ctx.fillStyle = gr;
+    ctx.beginPath();
+    ctx.arc(sp.x, sp.y, R.cell * 0.26, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
 
   function fillSq(sq, color, th) {
     var p = sqXY(sq);

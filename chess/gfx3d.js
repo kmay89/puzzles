@@ -320,6 +320,7 @@ function create(canvas, opts) {
     kind: "3d", skin: null, pal: null, orientation: 1,
     board: new Int8Array(128),
     hi: { selected: -1, legal: [], legalCapt: [], last: null, check: -1, hint: null },
+    lines: [], net: [],
     anim: null, drops: null, lost: false, dirty: true
   };
 
@@ -483,6 +484,9 @@ function create(canvas, opts) {
     R.dirty = true;
   };
 
+  R.setLines = function (list) { R.lines = list || []; R.dirty = true; };
+  R.setNet = function (squares) { R.net = squares || []; R.dirty = true; };
+
   R.setSkin = function (skin) {
     R.skin = skin;
     R.pal = derive(skin);
@@ -605,8 +609,55 @@ function create(canvas, opts) {
     drawMesh(mesh || MESH_QUAD, mModel(sqX(sq), y || 0.015, sqZ(sq), scale || 0.98, 0), color, alpha, true);
   }
 
-  /* dynamic arrow mesh for hints */
+  /* dynamic meshes: hint arrows, and the racing lines */
   var arrowBuf = gl.createBuffer(), arrowIdx = gl.createBuffer();
+  var lineBuf = gl.createBuffer(), lineIdx = gl.createBuffer();
+
+  /* One racing line, flat on the board. The ribbon comes back as a
+     polygon whose first half is the left edge and second half the right
+     edge reversed, so it triangulates as a strip without any clever
+     geometry — and the arrowhead is simply one more triangle. */
+  function drawLine(spec, now, th) {
+    var a = { x: sqX(spec.from), y: sqZ(spec.from) };
+    var b = { x: sqX(spec.to), y: sqZ(spec.to) };
+    var L = root.Lines.build(a, b, { kind: spec.kind, scale: 1, knight: spec.knight, alpha: spec.alpha });
+    var colour = spec.colour ||
+      (spec.kind === "threat" ? th.capt : spec.kind === "lane" ? th.last : th.hint);
+    var half = L.poly.length / 2, verts = [], idx = [], i;
+    for (i = 0; i < half; i++) {
+      var l = L.poly[i], r = L.poly[L.poly.length - 1 - i];
+      verts.push(l.x, 0.03, l.y, 0, 1, 0);
+      verts.push(r.x, 0.03, r.y, 0, 1, 0);
+    }
+    for (i = 0; i < half - 1; i++) {
+      var v = i * 2;
+      idx.push(v, v + 1, v + 2, v + 1, v + 3, v + 2);
+    }
+    if (L.head) {
+      var base = verts.length / 6;
+      for (i = 0; i < 3; i++) verts.push(L.head[i].x, 0.03, L.head[i].y, 0, 1, 0);
+      idx.push(base, base + 1, base + 2);
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, lineBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(U.aPos);
+    gl.vertexAttribPointer(U.aPos, 3, gl.FLOAT, false, 24, 0);
+    gl.enableVertexAttribArray(U.aNrm);
+    gl.vertexAttribPointer(U.aNrm, 3, gl.FLOAT, false, 24, 12);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, lineIdx);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(idx), gl.DYNAMIC_DRAW);
+    gl.uniformMatrix4fv(U.model, false, mIdent());
+    gl.uniform3fv(U.color, colour);
+    gl.uniform1f(U.alpha, L.alpha);
+    gl.uniform1f(U.flat, 1);
+    gl.drawElements(gl.TRIANGLES, idx.length, gl.UNSIGNED_SHORT, 0);
+
+    /* the spark: a small bright disc riding the line */
+    var sp = root.Lines.sparkAt(L.pts, root.Lines.phase(L, now));
+    bindMesh(MESH_DISC);
+    drawMesh(MESH_DISC, mModel(sp.x, 0.045, sp.y, 0.17, 0), [1, 1, 1], 0.95 * L.alpha, true);
+    drawMesh(MESH_DISC, mModel(sp.x, 0.04, sp.y, 0.30, 0), colour, 0.45 * L.alpha, true);
+  }
   function drawArrow(from, to, color) {
     var x0 = sqX(from), z0 = sqZ(from), x1 = sqX(to), z1 = sqZ(to);
     var dx = x1 - x0, dz = z1 - z0, len = Math.hypot(dx, dz);
@@ -728,7 +779,18 @@ function create(canvas, opts) {
     for (var ci = 0; ci < R.hi.legalCapt.length; ci++) {
       drawMesh(MESH_RING, mModel(sqX(R.hi.legalCapt[ci]), 0.02, sqZ(R.hi.legalCapt[ci]), 0.46, 0), th.capt, 0.6, true);
     }
-    if (R.hi.hint) drawArrow(R.hi.hint[0], R.hi.hint[1], th.hint);
+    if (R.hi.hint && !R.lines.length) drawArrow(R.hi.hint[0], R.hi.hint[1], th.hint);
+    /* the mate net: squares the king can't use */
+    if (R.net.length) {
+      bindMesh(MESH_RING);
+      for (var nn = 0; nn < R.net.length; nn++) {
+        drawMesh(MESH_RING, mModel(sqX(R.net[nn]), 0.022, sqZ(R.net[nn]), 0.34, 0), th.capt, 0.5, true);
+      }
+    }
+    if (R.lines.length && root.Lines) {
+      var lnow = performance.now();
+      for (var ll = 0; ll < R.lines.length; ll++) drawLine(R.lines[ll], lnow, th);
+    }
     gl.depthMask(true);
     gl.disable(gl.BLEND);
 
@@ -783,7 +845,7 @@ function create(canvas, opts) {
 
     flushPieces(th);
 
-    R.dirty = animating || moving || dropping;
+    R.dirty = animating || moving || dropping || R.lines.length > 0;
     return R.dirty;
   };
 

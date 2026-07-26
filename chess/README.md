@@ -69,6 +69,10 @@ learn.js            the Academy: an 18-lesson course built on retrieval
 skins.js            the look, as data: board colours + pattern, piece
                     colour + material, markings, plus share codes so a
                     skin can travel to a friend
+lines.js            the racing line: pure geometry that turns a chess
+                    idea into one tapered curve with a travelling spark —
+                    a plan, a threat, a promotion lane — drawn identically
+                    by both renderers
 engine.js           the rules of chess, complete: legal move generation
                     (castling, en passant, underpromotion), mate/stalemate,
                     every draw rule, FEN, SAN, and an alpha-beta search
@@ -109,6 +113,36 @@ tools/              dev-only, never shipped:
   make-icons.js     draws the app icons from scratch (analytic raster + 
                     hand-rolled PNG writer)
 ```
+
+## Two ideas worth explaining
+
+**The racing line.** A racing driver's line is one curve that contains a
+whole paragraph — brake here, turn in there, that's the apex, everything
+after it is exit speed. Nobody reads that mid-corner; they see the line.
+Chess advice has the same problem ("your bishop, along this diagonal, is
+why their knight can't move") and the same answer. So the board draws a
+small grammar of curves, and the meaning lives in the shape: a **run**
+tapers *away* from your piece toward where the idea lands; a **threat**
+is drawn coming *at* you, so a plan and a danger differ at a glance; a
+**lane** is the long straight road of a passed pawn; a **net** is the
+ring of squares a mated king can't reach — marks rather than a curve,
+because a net is a place, not a direction. Every curve carries a spark
+that travels it, because motion is the cheapest teaching there is: you
+can't help but follow it. The geometry lives in `lines.js` and is shared,
+so a line means exactly the same thing in 2D and in 3D.
+
+**Odds, the old way.** Before rating systems, a stronger player gave
+*odds* — a knight, a rook, time on the clock — so the game stayed a real
+game. This room does the same thing with help instead of material. Ask
+for a hint and the price depends on the position, not on who you are:
+**free while you're behind**, a small price when it's level, and steeper
+the further ahead you get (paid in clock seconds if you're using a
+clock, in marks if you aren't). The hint button wears its own price, so
+you always see the trade before you take it. The player who's behind
+also gets occasional *free* nudges, unasked — and the player who's ahead
+never does, because they don't need them. The end card shows the ledger
+("odds given"), names what the game was actually about, and offers the
+matching lesson, so a loss turns into the next thing you learn.
 
 ## Why it's honest
 

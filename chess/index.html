@@ -144,6 +144,11 @@
   .abtn.primary{background:var(--amber); border-color:var(--amber); color:#241a08}
   .abtn.primary .ic{color:#241a08}
   .abtn[disabled]{opacity:.35; pointer-events:none}
+  /* the hint's price, worn on the button so it's never a surprise */
+  .hintCost{display:block; font-size:.86em; line-height:1.1; margin-top:1px; font-weight:700}
+  .hintCost.behind{color:var(--good)}
+  .hintCost.level{color:var(--soft)}
+  .hintCost.ahead{color:var(--bad)}
 
   /* ---------- overlays ---------- */
   .ov{
@@ -463,7 +468,7 @@
   <div id="actions">
     <button class="abtn" id="btnMenu"><span class="ic">☰</span>Menu</button>
     <button class="abtn" id="btnUndo"><span class="ic">↩</span><span id="undoLbl">Undo</span></button>
-    <button class="abtn" id="btnHint"><span class="ic">💡</span>Hint</button>
+    <button class="abtn" id="btnHint"><span class="ic">💡</span>Hint<span class="hintCost" id="hintCost"></span></button>
     <button class="abtn" id="btnReplay"><span class="ic">🔁</span>Last move</button>
     <button class="abtn" id="btnFlip"><span class="ic">⇅</span>Flip</button>
     <button class="abtn" id="btnDim"><span class="ic" id="dimIc">③</span><span id="dimLbl">3D</span></button>
@@ -622,6 +627,8 @@
     <p id="endSub"></p>
     <p id="endLesson" class="hide" style="background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;text-align:left;font-size:.92em"></p>
     <button class="bigbtn" id="endRematch"><span class="em">🔄</span><span><b>Rematch</b><small id="endRematchSub">Same setup, colours swapped.</small></span></button>
+    <p id="endReview2" class="hide" style="background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;text-align:left;font-size:.88em;color:var(--soft)"></p>
+    <button class="bigbtn hide" id="endPractise"><span class="em">🎓</span><span><b>Practise what this game showed you</b><small id="endPractiseSub"></small></span></button>
     <button class="bigbtn" id="endReview"><span class="em">🔍</span><span><b>Look back at the game</b><small>Step through the moves on the board.</small></span></button>
     <button class="ghostbtn" id="endMenu">Back to the menu</button>
   </div>
@@ -765,6 +772,7 @@
 <script src="teach.js"></script>
 <script src="learn.js"></script>
 <script src="skins.js"></script>
+<script src="lines.js"></script>
 <script src="book.js"></script>
 <script src="eco.js"></script>
 <script src="gfx2d.js"></script>

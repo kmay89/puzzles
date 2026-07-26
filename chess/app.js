@@ -468,8 +468,14 @@ function commitMove(m, source, animOpts) {
   saveGame();
   syncButtons();
 
+  clearLines();
   /* name what just happened, while it's still on screen */
   if (lessons.length) setTimeout(function () { teachMoment(lessons, mover, source); }, 520);
+  /* and give the player who's behind a free word before their turn */
+  setTimeout(oddsNudge, 1500);
+  /* when a king is nearly caged, show the cage: it explains mate better
+     than any sentence can */
+  if (st.reason === "check") setTimeout(function () { if (!over) showMateNet(G.turn); }, 700);
 
   /* the gentle coach looks over the human's shoulder */
   if (source === "local" && prefs.coach && !clock.on && (mode === "coach" || mode === "pass")) {
@@ -523,6 +529,8 @@ function gentleUndo() {
 function giveHint() {
   if (!G || over) { return; }
   if (!canActNow()) { toast(mode === "lan" && G.turn !== lanSide ? "It's your opponent's move — the hint lamp lights on your turn." : "Hints come on your turn."); return; }
+  var odds = oddsFor(G.turn);
+  if (!oddsPay(G.turn)) return;
   var sans = G.played.map(function (r) { return r.san.replace(/[+#]$/, ""); });
   var book = Book.suggest(sans);
   var res = Chess.search(G, { ms: 700 });
@@ -559,10 +567,15 @@ function giveHint() {
     }
   }
   var san = Chess.toSAN(G, chosen);
-  hintArrow = [chosen.from, chosen.to];
+  hintArrow = null;
+  /* the line *is* the hint: one curve that shows where the idea goes */
+  showLines([{ from: chosen.from, to: chosen.to, kind: "run",
+               knight: Math.abs(chosen.piece) === Chess.N }], 9000);
   syncBoard();
   snd("hint");
-  toast("💡 <b>" + san + "</b> — " + (why || explainMove(chosen, res)), null, 8000);
+  var paid = odds.free ? "" :
+    " <i>(" + (clock.on ? odds.cost + " seconds" : odds.cost + " mark" + (odds.cost > 1 ? "s" : "")) + " — you're ahead)</i>";
+  toast("💡 <b>" + san + "</b> — " + (why || explainMove(chosen, res)) + paid, null, 8000);
 }
 
 function explainMove(m, res) {
@@ -722,6 +735,7 @@ function startGame(newMode, opts) {
   stopTour();
   lesson = null; lessonDone = false; lessonQueue = [];
   teachSeen = {}; teachCool = 0;
+  oddsSpent = { 1: 0, "-1": 0 }; oddsNudged = 0; oddsLastNudge = -99;
   $("lessonBar").classList.add("hide"); document.body.classList.remove("lesson-on"); reflow();
   mode = newMode;
   G = Chess.create();
@@ -743,6 +757,8 @@ function startGame(newMode, opts) {
 }
 function endGame(result, reason, taught) {
   if (over) return;
+  /* the last move's lesson counts toward "what this game was about" */
+  if (taught && taught.concept) teachSeen[taught.concept] = (teachSeen[taught.concept] || 0) + 1;
   over = { result: result, reason: reason };
   clock.run = 0;
   clearSel();
@@ -771,10 +787,61 @@ function endGame(result, reason, taught) {
     else lessonLine.classList.add("hide");
   }
   $("endRematchSub").textContent = "Same setup" + (mode !== "pass" ? ", colours swapped." : ".");
+  renderOddsReview();
   setTimeout(function () { if (over) $("ovEnd").classList.remove("hide"); }, REDUCED ? 100 : 1100);
   lsDel(SAVE_KEY);
 }
 function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+
+/* The review turns the game into next week's practice: whatever the
+   room had to explain along the way becomes a lesson you can do now,
+   which is also how it enters the spacing schedule. */
+function renderOddsReview() {
+  var box = $("endReview2");
+  if (!box) return;
+  var bits = [];
+  var w = oddsSpent[1], b = oddsSpent[-1];
+  if (w || b) {
+    var unit = clock.on ? "s" : "";
+    bits.push("<b>Odds given:</b> White " + (w ? w + unit : "none") +
+              " · Black " + (b ? b + unit : "none") +
+              " <small>(help is free for whoever is behind)</small>");
+  }
+  var seen = Object.keys(teachSeen);
+  if (seen.length) {
+    var names = { fork: "forks", pin: "pins", skewer: "skewers", hanging: "loose pieces",
+                  backRank: "the back rank", checkmate: "checkmate", stalemate: "stalemate",
+                  castling: "castling", promotion: "promotion", centre: "the centre",
+                  development: "development", check: "check" };
+    bits.push("<b>This game was about:</b> " +
+      seen.map(function (c) { return names[c] || c; }).join(", ") + ".");
+  }
+  box.innerHTML = bits.join("<br>");
+  box.classList.toggle("hide", !bits.length);
+  /* offer the matching lesson, if there is one */
+  var btn = $("endPractise");
+  if (!btn) return;
+  /* some things the room names in a game are taught in the course under
+     a nearer name — checkmate is met through the back rank, and so on */
+  var ALIAS = { checkmate: "backRank", check: "mate-support", stalemate: "promotion",
+                centre: "development" };
+  var target = null;
+  for (var i = 0; i < seen.length && !target; i++) {
+    var want = seen[i];
+    for (var pass = 0; pass < 2 && !target; pass++) {
+      for (var j = 0; j < Learn.LESSONS.length; j++) {
+        if (Learn.LESSONS[j].concept === want) { target = Learn.LESSONS[j]; break; }
+      }
+      want = ALIAS[seen[i]];
+      if (!want) break;
+    }
+  }
+  btn.classList.toggle("hide", !target);
+  if (target) {
+    $("endPractiseSub").textContent = target.title;
+    btn.onclick = function () { $("ovEnd").classList.add("hide"); startLesson(target, []); };
+  }
+}
 
 function rematch() {
   $("ovEnd").classList.add("hide");
@@ -795,7 +862,9 @@ function saveGame() {
   lsSet(SAVE_KEY, JSON.stringify({
     v: 1, mode: mode, sans: G.played.map(function (r) { return r.san; }),
     clockStr: clockStrOf(), wMs: Math.round(clock.w), bMs: Math.round(clock.b),
-    humanSide: humanSide, skill: skill
+    humanSide: humanSide, skill: skill,
+    /* the odds ledger is part of the game's story, so it survives a reload */
+    odds: [oddsSpent[1], oddsSpent[-1], oddsNudged]
   }));
 }
 function loadSave() {
@@ -814,6 +883,7 @@ function resumeSave(s) {
     Chess.play(g, m);
   }
   if (clock.on) { clock.w = s.wMs; clock.b = s.bMs; clock.run = g.played.length >= 1 ? g.turn : 0; clock.lastT = performance.now(); }
+  if (s.odds) { oddsSpent[1] = s.odds[0] || 0; oddsSpent[-1] = s.odds[1] || 0; oddsNudged = s.odds[2] || 0; }
   R.setPosition(G.board);
   syncAll();
   saveGame();      /* startGame wrote an empty save; restore the real one */
@@ -1419,6 +1489,143 @@ function showLearn(n) {
   $("ovLearn").classList.remove("hide");
 }
 
+
+
+/* ===================== odds =====================
+   Chess has an old and generous tradition: the stronger player gives
+   *odds* — a pawn, a piece, a slice of the clock — so that a lopsided
+   game is still a real game. This is that idea, moved from before the
+   game to during it, and paid in help rather than material.
+
+   The player who is behind gets the racing line, the threat warnings
+   and the nudges for nothing, offered before they ask. The player who
+   is ahead can have exactly the same help, but it costs them: seconds
+   off their clock if one is running, otherwise a mark against their
+   name in the review at the end. The price rises with the lead.
+
+   The effect is that a game between mismatched players keeps its shape
+   — and both people are being coached the whole way, because the one in
+   front is constantly being asked whether the help is worth the price,
+   which is its own kind of thinking. */
+var oddsSpent = { 1: 0, "-1": 0 };     /* seconds (or marks) each side has paid */
+var oddsNudged = 0, oddsLastNudge = -99;
+
+/* how far ahead `side` is, in pawns, from the position alone */
+function lead(side) {
+  if (!G) return 0;
+  var ev = Chess.evaluate(G);                 /* from the side to move */
+  var white = G.turn === 1 ? ev : -ev;
+  return (side === 1 ? white : -white) / 100;
+}
+
+/* what help costs this side right now */
+function oddsFor(side) {
+  var d = lead(side);
+  if (d <= -1.2) {
+    return { free: true, cost: 0, mood: "behind",
+             why: "You're behind — help is free while it is." };
+  }
+  if (d < 1.2) {
+    return { free: false, cost: clock.on ? 10 : 1, mood: "level",
+             why: "It's about level — a small price." };
+  }
+  var steep = Math.min(4, 1 + Math.floor((d - 1.2) / 1.5));
+  return { free: false, cost: clock.on ? 10 * steep : steep, mood: "ahead",
+           why: "You're ahead by about " + d.toFixed(1) + " — help costs more from here." };
+}
+function oddsLabel(side) {
+  var o = oddsFor(side);
+  if (o.free) return "free";
+  return clock.on ? ("−" + o.cost + "s") : ("−" + o.cost);
+}
+/* take the payment; returns false if they can't afford it */
+function oddsPay(side) {
+  var o = oddsFor(side);
+  if (o.free) return true;
+  if (clock.on) {
+    var have = side === 1 ? clock.w : clock.b;
+    if (have < (o.cost + 5) * 1000) {
+      toast("Not enough clock left to buy that — but it's free again the moment you're behind.");
+      return false;
+    }
+    if (side === 1) clock.w -= o.cost * 1000; else clock.b -= o.cost * 1000;
+    syncClocks();
+  }
+  oddsSpent[side] += o.cost;
+  return true;
+}
+/* the side the local person is playing (pass & play: whoever is to move) */
+function mySide() {
+  if (mode === "coach") return humanSide;
+  if (mode === "lan") return lanSide;
+  return G ? G.turn : 1;
+}
+
+/* the free coaching the trailing player gets without asking: one quiet
+   word at a time, never twice in a row, and only when actually behind */
+function oddsNudge() {
+  if (!prefs.coach || !G || over || mode === "lesson" || mode === "tour") return;
+  var side = G.turn;
+  if (mode === "coach" && side !== humanSide) return;
+  if (mode === "lan" && side !== lanSide) return;
+  if (!oddsFor(side).free) return;                      /* only for the one behind */
+  if (G.played.length - oddsLastNudge < 4) return;      /* not every move */
+  var warn = Teach.warnings(G, side);
+  var chance = Teach.opportunities(G, side);
+  var pick = (warn.length && warn[0].weight >= 90) ? warn[0] : (chance.length ? chance[0] : null);
+  if (!pick) return;
+  oddsLastNudge = G.played.length;
+  oddsNudged++;
+  if (pick.squares && pick.squares.length) {
+    R.setNet(pick.concept === "backRank" ? [] : []);
+    showLines([{ from: pick.squares[0], to: pick.squares[Math.min(1, pick.squares.length - 1)],
+                 kind: pick.concept === "hanging" ? "threat" : "ghost" }], 5200);
+  }
+  toast("🫱 " + pick.text + " <i>(free — you're behind)</i>", null, 7000);
+}
+
+/* ---- the lines on the board ---- */
+var lineTimer = 0;
+function showLines(list, ms) {
+  if (R.setLines) R.setLines(list);
+  if (R2 && R2.setLines) R2.setLines(list);
+  if (R3 && R3.setLines) R3.setLines(list);
+  clearTimeout(lineTimer);
+  needFrame();
+  if (ms) lineTimer = setTimeout(clearLines, ms);
+}
+function clearLines() {
+  clearTimeout(lineTimer);
+  if (R2 && R2.setLines) { R2.setLines([]); R2.setNet([]); }
+  if (R3 && R3.setLines) { R3.setLines([]); R3.setNet([]); }
+  needFrame();
+}
+/* the mate net: every square around the king that is denied to it */
+function showMateNet(side) {
+  if (!G) return;
+  var kingSq = G.kings[side === 1 ? 0 : 1], out = [];
+  var K = [17, 16, 15, 1, -17, -16, -15, -1], i, t;
+  /* Ask the rules rather than the attack map. A square can be denied for
+     reasons a simple "is it attacked?" misses — most famously the square
+     directly behind the king along the checking line, which only looks
+     safe because the king itself is standing in the way. */
+  var legal = {};
+  if (G.turn === side) {
+    var ms = Chess.movesFrom(G, kingSq);
+    for (i = 0; i < ms.length; i++) legal[ms[i].to] = true;
+  }
+  for (i = 0; i < 8; i++) {
+    t = kingSq + K[i];
+    if (t & 0x88) continue;
+    var occ = G.board[t];
+    if (occ && (occ > 0 ? 1 : -1) === side) continue;      /* own piece: not an escape anyway */
+    if (G.turn === side ? !legal[t] : Chess.attacked(G, t, -side)) out.push(t);
+  }
+  if (R2 && R2.setNet) R2.setNet(out);
+  if (R3 && R3.setNet) R3.setNet(out);
+  needFrame();
+  return out.length;
+}
 
 /* ===================== teachable moments =====================
    The best teaching in the app happens inside your own game: the
@@ -2046,10 +2253,24 @@ function syncAll() {
   syncBoard(); syncMoveList(); syncBars(); syncClocks(); syncTurnStrip(); syncButtons();
 }
 function syncButtons() {
+  syncOddsUI();
   $("undoLbl").textContent = mode === "lan" ? "Takeback" : "Undo";
   $("btnUndo").toggleAttribute("disabled", !G || !G.played.length || !!over || mode === "tour");
   $("btnHint").toggleAttribute("disabled", !G || !!over || mode === "tour");
   $("btnReplay").toggleAttribute("disabled", !G || !G.played.length);
+}
+
+/* the hint button says what it will cost before you press it */
+function syncOddsUI() {
+  var lbl = $("hintCost");
+  if (!lbl) return;
+  if (!G || over || mode === "lesson" || mode === "tour" || !canActNow()) {
+    lbl.textContent = ""; lbl.className = "hintCost"; return;
+  }
+  var o = oddsFor(G.turn);
+  lbl.textContent = oddsLabel(G.turn);
+  lbl.className = "hintCost " + o.mood;
+  lbl.title = o.why;
 }
 
 /* ===== settings ===== */
@@ -2293,6 +2514,10 @@ window.__cr = { get game() { return G; }, Chess: Chess, Book: Book, Net: Net,
   openStudio: openStudio, openLink: openLink, feedCode: feedCode,
   scanSupported: scanSupported, commitMove: commitMove,
   get lanNonce() { return lanNonce; }, get lanSide() { return lanSide; },
+  lead: lead, oddsFor: oddsFor, oddsNudge: oddsNudge, showMateNet: showMateNet,
+  get oddsSpent() { return oddsSpent; }, syncAll: syncAll,
+  clockMs: function (side) { return side === 1 ? clock.w : clock.b; },
+  oddsResetForTest: function () { oddsLastNudge = -99; teachSeen = {}; teachCool = 0; },
   get mode() { return mode; }, startGame: startGame, get renderer() { return R; },
   feedCode: feedCode, openLink: openLink };   /* the join flow's one door, for tests */
 })();

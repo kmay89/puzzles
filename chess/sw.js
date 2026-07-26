@@ -2,11 +2,11 @@
    Bump VERSION with every release: the changed byte triggers the
    browser's update check, which shows players the in-app refresh bar.
    Pattern proven in HIVEMIND; scoped here to /chess/. */
-const VERSION = '2026.07.26.1';
+const VERSION = '2026.07.26.2';
 const CACHE = 'chessroom-' + VERSION;
 const SHELL = [
   './', './index.html',
-  './engine.js', './book.js', './eco.js', './teach.js', './learn.js', './skins.js',
+  './engine.js', './book.js', './eco.js', './teach.js', './learn.js', './skins.js', './lines.js',
   './gfx2d.js', './gfx3d.js', './net.js', './app.js',
   './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png',
