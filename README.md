@@ -22,6 +22,10 @@ chess/        the chess room — chess taught kindly: a full 3D board
               (2D too), a patient coach, opening stories, a tournament
               clock, and nearby two-player over WebRTC with no accounts
               (see chess/README.md)
+domino/       the domino table — Mexican dominoes, four seats and two
+              parejas: a 3D table, an opponent that counts the bones and
+              hears every pass, and four phones joined by holding them
+              up to each other (see domino/README.md)
 og.png        the social preview
 .nojekyll     serve files exactly as they are
 ```
