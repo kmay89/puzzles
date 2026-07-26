@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="The Solving Room — five twisty puzzles that solve themselves in your browser, with the real mathematics on display: God's algorithm, Kociemba's two-phase, a map of every position, a live statistical engine, a camera scanner, a patient teacher, and a door into your own room. No libraries, no build step, no accounts.">
+<meta name="description" content="The Solving Room — puzzles that solve themselves in your browser, with the real mathematics on display: seven twisty puzzles solved by God's algorithm and Kociemba's two-phase, chess taught kindly, and sudoku that shows how its puzzles are made. No libraries, no build step, no accounts.">
 <meta name="theme-color" content="#0e0a07">
 <link rel="canonical" href="https://kmay89.github.io/puzzles/">
 <meta property="og:type" content="website">
@@ -107,13 +107,15 @@
 <header class="wrap">
   <p class="kicker">kmay89 / puzzles</p>
   <h1>The Solving Room</h1>
-  <p class="lede">Seven twisty puzzles that scramble and solve themselves in your
-  browser — with the actual mathematics on display, not behind glass. No
-  libraries, no build step, no accounts, nothing tracked.</p>
+  <p class="lede">Puzzles that solve themselves in your browser — and show you
+  how — with the actual mathematics on display, not behind glass. Seven twisty
+  puzzles, a chess room, and a sudoku room. No libraries, no build step, no
+  accounts, nothing tracked.</p>
   <nav class="doors" aria-label="Enter">
     <a href="room/">enter the room →</a>
     <a class="ar" href="room/?ar=1">view in AR ✦</a>
     <a href="chess/">♞ the chess room →</a>
+    <a href="sudoku/">▦ the sudoku room →</a>
     <span class="hint">the AR door wants a phone; everything else works anywhere WebGL does</span>
   </nav>
   <a href="room/"><img class="heroimg" src="og.png" alt="A glowing megaminx floating in a warm dark room"></a>
@@ -198,6 +200,35 @@
   </section>
 
   <section>
+    <h2>Next door: sudoku, with the working shown</h2>
+    <p>The newest room takes the same principle somewhere unexpected. Every
+    sudoku app in the world hands you a grid and a difficulty label and asks
+    you to take both on trust. <b>The Sudoku Room</b> hands you the label
+    <i>and the argument behind it</i>.</p>
+    <p>Press <b>forge</b> and you watch a puzzle being made: a blank grid
+    filling itself by constraint propagation, clues being taken away one at a
+    time, and each removal tested twice — <i>does this still have exactly one
+    answer?</i> (a brute-force count, capped at two) and <i>can a person still
+    finish it with the techniques this difficulty promises?</i> Fail either and
+    the clue goes back, visibly. Grids that come out too easy are thrown away
+    in front of you, which is the honest reason a difficulty setting is hard to
+    hit.</p>
+    <p>The difficulty on the label is not a guess from the clue count: the room
+    <i>solves</i> the puzzle the way a person would — simplest available step,
+    over and over, out of a library of nineteen named techniques — and the
+    hardest thing it needed gives the puzzle its name. That same solver is the
+    hint button, which is why a hint can name a technique, show you where it
+    lives, and explain the argument in plain words instead of just filling in a
+    square. Meet a technique and it joins your codex with a real position to
+    practise on; find it yourself three times unaided and it is yours.</p>
+    <p class="aside">Two promises hold, and they are testable rather than
+    rhetorical: every puzzle has exactly one answer, and every puzzle can be
+    finished by reasoning — never by guessing. The generator refuses to ship a
+    grid its own techniques cannot finish, and the test suite checks every
+    elimination the solver ever makes against the brute-force answer.</p>
+  </section>
+
+  <section>
     <h2>What you get out of it</h2>
     <div class="rooms">
       <div><b>if you're curious</b>
@@ -210,6 +241,10 @@
         solves <i>your</i> cube — then teaches it back one turn at a time,
         with a glowing arrow on the face to turn and a camera that aims
         itself. A "back" button forgives everything.</p></div>
+      <div><b>if you just want a puzzle</b>
+        <p>Sudoku, free and offline, with no ads and no account: five
+        difficulties, a daily, a Zen mode with no clock, and a hint
+        button that teaches instead of telling.</p></div>
       <div><b>if you're a mathematician</b>
         <p>Exact censuses computed live from the God table, proven-distance
         readouts, a walkable Cayley graph, an antipode button, the
@@ -236,6 +271,9 @@
       your device; impossible scans are caught by the laws of the cube.</li>
       <li><b>the score ✦</b> — write any sequence in notation (patterns
       included) and have it performed or taught, forwards and back.</li>
+      <li><b>the forge ▦</b> — sudoku made in public: fill, dig, grade,
+      reject, repeat, with every uniqueness test and every rejected grid
+      shown as it happens.</li>
       <li><b>put it in your room ✦</b> — WebXR on Android; a gyroscope
       window on iPhone, labelled honestly; either way it sits there
       quietly scrambling and solving itself like an ornament that

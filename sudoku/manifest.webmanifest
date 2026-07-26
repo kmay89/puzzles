@@ -1,0 +1,24 @@
+{
+  "name": "The Sudoku Room — puzzles that show their working",
+  "short_name": "Sudoku Room",
+  "description": "Free sudoku that shows how its puzzles are made and teaches the nineteen techniques that solve them. No ads, no accounts, nothing tracked. Works offline.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "fullscreen"],
+  "orientation": "any",
+  "background_color": "#0e0a07",
+  "theme_color": "#0e0a07",
+  "categories": ["games", "education", "puzzle"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "The daily puzzle", "url": "./#daily" },
+    { "name": "The Forge", "url": "./#forge" },
+    { "name": "The Codex", "url": "./#codex" }
+  ]
+}
