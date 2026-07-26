@@ -1,0 +1,4 @@
+# playwright-core is installed on demand for tools/room-check.js and is
+# never part of the shipped room — see README.
+node_modules/
+package-lock.json

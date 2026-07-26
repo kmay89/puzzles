@@ -1,0 +1,17 @@
+{
+  "name": "The Reading Room",
+  "short_name": "Reading Room",
+  "description": "A block world in your browser, rendered by a voxel engine written from scratch: walk a library about the freedom to read, or bring a Minecraft world of your own.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b0d10",
+  "theme_color": "#0b0d10",
+  "categories": ["games", "education"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
