@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>The Sudoku Room — puzzles that show their working</title>
+<meta name="description" content="A free sudoku app that shows you how its puzzles are made and teaches you nineteen real solving techniques as you climb the difficulties. No ads, no accounts, nothing tracked, works offline.">
+<meta name="theme-color" content="#0e0a07">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta property="og:title" content="The Sudoku Room">
+<meta property="og:description" content="Sudoku that shows its working: watch a puzzle being forged, learn nineteen real techniques, and never be told 'wrong' without being told why. Free, offline, nothing tracked.">
+<style>
+  /* ---------------------------------------------------------------
+     Six colour tokens, two typefaces that ship with every computer,
+     three rules of motion — the same design system as the rest of the
+     solving room (documented at the top of room/index.html).
+
+     The one addition here is paper. The room is dark; the puzzle is a
+     sheet lying under the lamp. Everything else follows from that.
+     --------------------------------------------------------------- */
+  :root{
+    --room:#0e0a07; --room-deep:#080604; --room-up:#1a1209;
+    --lamp:#ffc97a; --ink:#f4e9d8; --ink-dim:#b9a88f; --ink-faint:#7e6f5b;
+    --green:#63e6a9; --bad:#ff7b6e; --line:rgba(185,168,143,.25);
+
+    /* the sheet */
+    --paper:#efe3ce; --paper-2:#e6d8c0;
+    --rule:#c3ad8c; --rule-bold:#7d6749;
+    --given:#2a2018; --wrote:#26507f; --pencil:#8a785e;
+    --wash:rgba(255,201,122,.19);      /* the lamp on the row you are in */
+    --echo:rgba(38,80,127,.14);        /* other squares holding your digit */
+    --focus:#1f9d6a;                   /* a technique's pattern */
+    --focus-soft:rgba(99,230,169,.34);
+    --cut:#c2452f;                     /* what a technique rules out */
+
+    --safe-top:env(safe-area-inset-top,0px);
+    --safe-bot:env(safe-area-inset-bottom,0px);
+  }
+  /* The slate sheet: same room, the puzzle written on the desk itself. */
+  body.slate{
+    --paper:#17130e; --paper-2:#120f0b;
+    --rule:#4a3d2e; --rule-bold:#8d7452;
+    --given:#f4e9d8; --wrote:#ffc97a; --pencil:#94836a;
+    --wash:rgba(255,201,122,.16); --echo:rgba(255,201,122,.10);
+    --focus:#63e6a9; --focus-soft:rgba(99,230,169,.22); --cut:#ff7b6e;
+  }
+
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    margin:0; color:var(--ink);
+    font:16px/1.55 Georgia,"Times New Roman",serif;
+    background:radial-gradient(120vmax 80vmax at 50% -12%, var(--room-up) 0%, var(--room) 46%, var(--room-deep) 100%);
+    background-attachment:fixed;
+    overflow:hidden; touch-action:manipulation;
+    -webkit-user-select:none; user-select:none;
+  }
+  button{font:inherit; color:inherit; background:none; border:none; cursor:pointer; padding:0}
+  .hide{display:none !important}
+  .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
+
+  /* ---------- screens ---------- */
+  .screen{
+    position:absolute; inset:0; display:flex; flex-direction:column;
+    padding-top:var(--safe-top); padding-bottom:var(--safe-bot);
+    overflow:hidden;
+  }
+  .scroll{overflow-y:auto; -webkit-overflow-scrolling:touch; flex:1; min-height:0}
+  .wrap{max-width:44rem; margin:0 auto; padding:0 1.1rem; width:100%}
+
+  .kicker{
+    font-family:ui-monospace,Menlo,Consolas,monospace;
+    font-size:.64rem; letter-spacing:.22em; text-transform:uppercase;
+    color:var(--ink-faint); margin:0;
+  }
+  h1{font-size:clamp(1.9rem,7vw,2.9rem); font-weight:normal; font-style:italic; margin:.25rem 0 .4rem}
+  h2{font-size:1.05rem; font-weight:normal; font-style:italic; color:var(--lamp); margin:1.5rem 0 .5rem}
+  .lede{color:var(--ink-dim); font-style:italic; margin:0 0 1.2rem}
+  a{color:var(--lamp); text-decoration:none; border-bottom:1px solid rgba(255,201,122,.3)}
+
+  /* ---------- buttons and chips ---------- */
+  .btn{
+    border:1px solid rgba(185,168,143,.45); border-radius:999px;
+    padding:.55rem 1.15rem; font-style:italic; color:var(--ink);
+    transition:border-color .18s, color .18s, background .18s, transform .1s;
+  }
+  .btn:hover{border-color:var(--lamp); color:var(--lamp)}
+  .btn:active{transform:scale(.97)}
+  .btn.lit{border-color:rgba(255,201,122,.75); color:var(--lamp); background:rgba(255,201,122,.09)}
+  .btn.big{padding:.75rem 1.7rem; font-size:1.08rem}
+  .btn[disabled]{opacity:.4; pointer-events:none}
+  .chip{
+    display:inline-flex; align-items:center; gap:.35rem;
+    font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.66rem;
+    letter-spacing:.12em; text-transform:uppercase; color:var(--ink-faint);
+    border:1px solid var(--line); border-radius:999px; padding:.22rem .6rem;
+  }
+  .chip.lit{color:var(--lamp); border-color:rgba(255,201,122,.5)}
+  .card{
+    border:1px solid var(--line); border-radius:14px;
+    background:rgba(8,6,4,.45); padding:.9rem 1rem;
+  }
+
+  /* ---------- home ---------- */
+  #home header{padding:2.2rem 0 .6rem; text-align:center}
+  .rankline{display:flex; align-items:center; gap:.6rem; justify-content:center; flex-wrap:wrap; margin:.2rem 0 1.4rem}
+  .bar{width:min(15rem,52vw); height:3px; background:rgba(185,168,143,.2); border-radius:2px; overflow:hidden}
+  .bar i{display:block; height:100%; background:var(--lamp); width:0; transition:width .6s}
+
+  .bands{display:grid; gap:.55rem; margin:.4rem 0 1.2rem}
+  .band{
+    display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:.85rem;
+    border:1px solid var(--line); border-radius:14px; padding:.75rem .95rem;
+    background:rgba(8,6,4,.45); text-align:left; width:100%;
+    transition:border-color .18s, background .18s, transform .1s;
+  }
+  .band:hover{border-color:rgba(255,201,122,.55)}
+  .band:active{transform:scale(.99)}
+  .band .dots{display:flex; gap:3px}
+  .band .dots i{width:7px; height:7px; border-radius:50%; background:rgba(185,168,143,.25)}
+  .band .dots i.on{background:var(--lamp)}
+  .band b{display:block; font-style:italic; font-weight:normal; font-size:1.12rem; color:var(--ink)}
+  .band small{display:block; color:var(--ink-faint); font-size:.8rem; font-style:italic}
+  .band .meta{font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.68rem; color:var(--ink-faint); text-align:right; white-space:nowrap}
+  .band.locked{opacity:.5}
+  .band.locked b:after{content:" · locked"; font-size:.7rem; color:var(--ink-faint); font-style:normal}
+
+  .doors{display:grid; grid-template-columns:repeat(auto-fit,minmax(9.5rem,1fr)); gap:.55rem; margin:.2rem 0 1rem}
+  .door{
+    border:1px solid var(--line); border-radius:14px; padding:.8rem .9rem;
+    background:rgba(8,6,4,.45); text-align:left;
+    transition:border-color .18s, transform .1s;
+  }
+  .door:hover{border-color:rgba(255,201,122,.55)}
+  .door:active{transform:scale(.98)}
+  .door b{display:block; font-style:italic; font-weight:normal; color:var(--lamp); font-size:1.02rem}
+  .door small{color:var(--ink-faint); font-size:.78rem; font-style:italic; line-height:1.4; display:block; margin-top:.15rem}
+
+  footer{padding:1.6rem 0 2.4rem; text-align:center; font-size:.78rem; color:var(--ink-faint)}
+  footer a{border:none}
+
+  /* ---------- the play screen ---------- */
+  #play{display:none}
+  #play.on{display:flex}
+  .topbar{
+    display:flex; align-items:center; gap:.5rem; padding:.5rem .8rem .35rem;
+    flex:none;
+  }
+  .topbar .grow{flex:1}
+  .iconbtn{
+    width:2.1rem; height:2.1rem; border-radius:50%; border:1px solid var(--line);
+    display:grid; place-items:center; font-size:1rem; color:var(--ink-dim);
+    transition:border-color .18s,color .18s;
+  }
+  .iconbtn:hover{border-color:var(--lamp); color:var(--lamp)}
+  #clock{font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.95rem; color:var(--ink-dim); letter-spacing:.04em}
+
+  #play .playmain{display:flex; flex-direction:column; flex:1; min-height:0}
+  #play .side{display:flex; flex-direction:column; flex:1; min-height:0}
+  #play .padwrap{margin-top:auto}
+  .boardwrap{
+    position:relative; flex:none; width:min(94vw, 62vh, 30rem); margin:.2rem auto .4rem;
+    aspect-ratio:1;
+  }
+  .board{
+    position:absolute; inset:0;
+    display:grid; grid-template-columns:repeat(9,1fr); grid-template-rows:repeat(9,1fr);
+    background:var(--paper); border-radius:6px;
+    box-shadow:0 18px 44px rgba(0,0,0,.55), 0 0 0 1px rgba(0,0,0,.35);
+    overflow:hidden;
+  }
+  /* the paper has a grain and the lamp falls on it from the top left */
+  .board:before{
+    content:""; position:absolute; inset:0; pointer-events:none; z-index:3;
+    background:radial-gradient(120% 90% at 22% 0%, rgba(255,255,255,.16), rgba(0,0,0,0) 60%);
+  }
+  .cell{
+    position:relative; display:grid; place-items:center;
+    font:400 clamp(1.1rem,5.2vw,1.9rem)/1 Georgia,"Times New Roman",serif;
+    color:var(--wrote); background:transparent;
+    border-right:1px solid var(--rule); border-bottom:1px solid var(--rule);
+    transition:background-color .16s;
+  }
+  .cell:nth-child(9n){border-right:none}
+  .cell:nth-child(n+73){border-bottom:none}
+  .cell.br{border-right:2px solid var(--rule-bold)}
+  .cell.bb{border-bottom:2px solid var(--rule-bold)}
+  .cell.given{color:var(--given); font-weight:700}
+  .cell .v{position:relative; z-index:2; transition:transform .14s}
+  .cell.wash{background:var(--wash)}
+  .cell.echo{background:var(--echo)}
+  .cell.sel{background:rgba(255,201,122,.46); box-shadow:inset 0 0 0 2px var(--rule-bold)}
+  .cell.bad{color:var(--cut) !important}
+  .cell.pat{background:var(--focus-soft); box-shadow:inset 0 0 0 2px var(--focus)}
+  .cell.cut{box-shadow:inset 0 0 0 2px var(--cut)}
+  .cell.hushed{opacity:.42}
+
+  /* pencil marks: nine little slots, always in the same place */
+  .pm{
+    position:absolute; inset:6%; display:grid; z-index:1;
+    grid-template-columns:repeat(3,1fr); grid-template-rows:repeat(3,1fr);
+    font:400 clamp(.42rem,1.75vw,.66rem)/1 ui-monospace,Menlo,Consolas,monospace;
+    color:var(--pencil); pointer-events:none;
+  }
+  .pm span{display:grid; place-items:center; opacity:0; transition:opacity .12s, color .12s, transform .12s}
+  .pm span.on{opacity:1}
+  .pm span.hi{color:var(--focus); font-weight:700; transform:scale(1.35)}
+  .pm span.gone{color:var(--cut); text-decoration:line-through; opacity:1}
+  .cell.filled .pm{display:none}
+
+  /* the three rules of motion: things arrive, things settle, nothing
+     bounces without a reason */
+  @keyframes settle{0%{transform:scale(1.5); opacity:0}60%{transform:scale(.94)}100%{transform:scale(1); opacity:1}}
+  .cell.pop .v{animation:settle .26s cubic-bezier(.2,.9,.3,1.4)}
+  @keyframes nope{0%,100%{transform:translateX(0)}25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
+  .cell.shake{animation:nope .26s}
+  @keyframes sweep{0%{background:rgba(99,230,169,0)}35%{background:rgba(99,230,169,.55)}100%{background:rgba(99,230,169,0)}}
+  .cell.sweep{animation:sweep .7s ease-out}
+  @keyframes glowring{0%{box-shadow:inset 0 0 0 0 var(--focus)}50%{box-shadow:inset 0 0 0 3px var(--focus)}100%{box-shadow:inset 0 0 0 2px var(--focus)}}
+  .cell.pat{animation:glowring .4s}
+
+  #linkLayer{position:absolute; inset:0; z-index:4; pointer-events:none}
+  #fx{position:absolute; inset:0; z-index:5; pointer-events:none}
+
+  /* ---------- the margin: where the room talks ---------- */
+  .margin{
+    flex:none; min-height:2.6rem; max-height:42vh; overflow-y:auto;
+    margin:.1rem auto .2rem; padding:0 1rem;
+    width:min(94vw,34rem); color:var(--ink-dim); font-size:.9rem; font-style:italic;
+    border-left:2px solid rgba(255,201,122,.35);
+  }
+  .margin.quiet{border-left-color:transparent}
+  .margin b{color:var(--lamp); font-weight:normal; font-style:normal;
+    font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.68rem;
+    letter-spacing:.14em; text-transform:uppercase; display:block; margin-bottom:.2rem}
+  .margin .more{
+    display:inline-block; margin-top:.35rem; font-size:.78rem; color:var(--lamp);
+    border-bottom:1px solid rgba(255,201,122,.4); font-style:normal;
+  }
+
+  /* ---------- the pad ---------- */
+  .padwrap{flex:none; padding:.2rem .6rem calc(.5rem + var(--safe-bot)); width:min(100%,34rem); margin:0 auto}
+  .pad{display:grid; grid-template-columns:repeat(9,1fr); gap:.3rem}
+  .key{
+    position:relative; aspect-ratio:.82; border-radius:9px;
+    border:1px solid var(--line); background:rgba(20,15,10,.5);
+    display:grid; place-items:center; font:400 1.5rem/1 Georgia,serif; color:var(--ink);
+    transition:transform .09s, border-color .18s, background .18s, opacity .2s;
+  }
+  .key small{
+    position:absolute; bottom:2px; right:4px; font:400 .55rem/1 ui-monospace,Menlo,monospace;
+    color:var(--ink-faint);
+  }
+  .key:active{transform:scale(.92); background:rgba(255,201,122,.16)}
+  .key.done{opacity:.32}
+  .key.lit{border-color:rgba(255,201,122,.7); color:var(--lamp)}
+  body.pencil .key{color:var(--ink-dim); font-size:1.15rem; font-style:italic}
+  .tools{display:grid; grid-template-columns:repeat(5,1fr); gap:.3rem; margin-top:.35rem}
+  .tool{
+    border:1px solid var(--line); border-radius:9px; padding:.45rem .2rem;
+    display:grid; place-items:center; gap:.1rem; color:var(--ink-dim);
+    font-size:.62rem; font-family:ui-monospace,Menlo,Consolas,monospace;
+    letter-spacing:.08em; text-transform:uppercase; transition:border-color .18s,color .18s;
+  }
+  .tool em{font-size:1.05rem; font-style:normal; line-height:1}
+  .tool:hover{border-color:var(--lamp)}
+  .tool.lit{border-color:rgba(255,201,122,.7); color:var(--lamp); background:rgba(255,201,122,.08)}
+  .tool .badge{
+    position:absolute; margin:-1.4rem 0 0 1.6rem; font-size:.55rem; color:var(--room);
+    background:var(--lamp); border-radius:999px; padding:0 .25rem;
+  }
+
+  /* ---------- overlays ---------- */
+  .ov{
+    position:absolute; inset:0; z-index:20; display:flex; flex-direction:column;
+    background:rgba(8,6,4,.93); backdrop-filter:blur(7px); -webkit-backdrop-filter:blur(7px);
+    padding-top:var(--safe-top); padding-bottom:var(--safe-bot);
+    animation:fadein .18s;
+  }
+  @keyframes fadein{from{opacity:0}to{opacity:1}}
+  .ov header{display:flex; align-items:center; gap:.6rem; padding:.7rem 1rem .3rem; flex:none}
+  .ov header h3{margin:0; font-weight:normal; font-style:italic; font-size:1.15rem; color:var(--lamp); flex:1}
+  .ov .body{flex:1; min-height:0; overflow-y:auto; padding:.4rem 0 2rem}
+  .ov p{color:var(--ink-dim); margin:.5rem 0}
+
+  /* the menu */
+  .menucol{display:grid; gap:.4rem; max-width:22rem; margin:0 auto; padding:1rem}
+  .menucol .btn{width:100%; text-align:center}
+  .switch{
+    display:flex; align-items:center; gap:.7rem; width:100%; padding:.55rem .9rem;
+    border:1px solid var(--line); border-radius:999px; color:var(--ink-dim); font-style:italic;
+  }
+  .switch i{
+    flex:none; width:2.1rem; height:1.15rem; border-radius:999px; background:rgba(185,168,143,.22);
+    position:relative; transition:background .2s;
+  }
+  .switch i:after{
+    content:""; position:absolute; top:2px; left:2px; width:.95rem; height:.95rem; border-radius:50%;
+    background:var(--ink-faint); transition:transform .2s, background .2s;
+  }
+  .switch.on{color:var(--lamp)} .switch.on i{background:rgba(255,201,122,.35)}
+  .switch.on i:after{transform:translateX(.95rem); background:var(--lamp)}
+  .switch small{margin-left:auto; font-size:.68rem; color:var(--ink-faint); font-style:normal}
+
+  /* the codex */
+  .techlist{display:grid; gap:.5rem}
+  .tech{
+    border:1px solid var(--line); border-radius:13px; padding:.7rem .9rem;
+    background:rgba(8,6,4,.5); text-align:left; width:100%;
+    display:grid; grid-template-columns:1fr auto; gap:.5rem; align-items:center;
+    transition:border-color .18s;
+  }
+  .tech:hover{border-color:rgba(255,201,122,.55)}
+  .tech b{font-weight:normal; font-style:italic; font-size:1.05rem; color:var(--ink); display:block}
+  .tech small{display:block; color:var(--ink-faint); font-size:.76rem; font-style:italic}
+  .tech .stars{font-size:.8rem; color:var(--lamp); letter-spacing:.1em; white-space:nowrap}
+  .tech.unmet b{color:var(--ink-faint)}
+  .tech.unmet .stars{color:var(--ink-faint)}
+  .tierhead{
+    display:flex; align-items:baseline; gap:.6rem; margin:1.1rem 0 .35rem;
+    color:var(--lamp); font-style:italic;
+  }
+  .tierhead small{color:var(--ink-faint); font-size:.75rem}
+
+  /* a lesson */
+  .lessonwrap{width:min(94vw,24rem); margin:.4rem auto; position:relative; aspect-ratio:1}
+  .prompt{width:min(94vw,34rem); margin:.5rem auto; text-align:center; color:var(--ink-dim); font-style:italic; min-height:3.4rem; padding:0 1rem}
+  .prompt b{display:block; color:var(--lamp); font-style:normal; font-size:.7rem; letter-spacing:.14em; text-transform:uppercase; font-family:ui-monospace,Menlo,monospace}
+  .rowbtns{display:flex; gap:.45rem; justify-content:center; flex-wrap:wrap; padding:.3rem 1rem}
+
+  /* the forge */
+  .forgegrid{
+    display:grid; grid-template-columns:repeat(9,1fr); gap:1px;
+    width:min(80vw,20rem); aspect-ratio:1; margin:.3rem auto;
+    background:var(--rule); border:2px solid var(--rule-bold); border-radius:4px; overflow:hidden;
+  }
+  .fc{
+    background:var(--paper); display:grid; place-items:center;
+    font:400 clamp(.6rem,2.6vw,1rem)/1 Georgia,serif; color:var(--given);
+    transition:background .25s, color .25s;
+  }
+  .fc.empty{color:transparent}
+  .fc.testing{background:var(--lamp)}
+  .fc.kept{background:#f2c9b6}
+  .fc.gone{background:var(--paper-2); color:transparent}
+  .fc.auto{color:var(--wrote)}
+  .fc.step{background:var(--focus-soft)}
+  .forgestats{
+    display:flex; gap:.35rem 1.1rem; justify-content:center; flex-wrap:wrap;
+    font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.68rem; color:var(--ink-faint);
+    letter-spacing:.1em; text-transform:uppercase; margin:.3rem 0;
+  }
+  .forgestats span{white-space:nowrap}
+  .forgestats b{color:var(--lamp); font-weight:normal}
+  .narr{
+    width:min(94vw,34rem); margin:.4rem auto; min-height:4.2rem;
+    color:var(--ink-dim); font-style:italic; text-align:center; padding:0 1rem;
+  }
+  .narr b{display:block; color:var(--lamp); font-style:normal; font-size:.68rem; letter-spacing:.15em; text-transform:uppercase; font-family:ui-monospace,Menlo,monospace; margin-bottom:.25rem}
+  .ledger{
+    width:min(94vw,34rem); margin:.4rem auto; font-family:ui-monospace,Menlo,Consolas,monospace;
+    font-size:.68rem; color:var(--ink-faint); line-height:1.7; max-height:7rem; overflow-y:auto;
+    border-top:1px solid var(--line); padding-top:.4rem;
+  }
+  .ledger div{display:flex; gap:.5rem}
+  .ledger i{color:var(--lamp); font-style:normal; min-width:5.4rem}
+
+  /* the wall */
+  .wall{display:grid; grid-template-columns:repeat(auto-fill,minmax(8.5rem,1fr)); gap:.5rem}
+  .badge{
+    border:1px solid var(--line); border-radius:13px; padding:.75rem .7rem; text-align:center;
+    background:rgba(8,6,4,.5);
+  }
+  .badge em{display:block; font-size:1.5rem; font-style:normal; color:var(--ink-faint); line-height:1.5}
+  .badge b{display:block; font-weight:normal; font-style:italic; font-size:.92rem; margin:.1rem 0}
+  .badge small{display:block; color:var(--ink-faint); font-size:.72rem; line-height:1.35}
+  .badge.got{border-color:rgba(255,201,122,.5)}
+  .badge.got em{color:var(--lamp); text-shadow:0 0 16px rgba(255,201,122,.5)}
+  .badge.got b{color:var(--lamp)}
+
+  /* winning */
+  .winstat{display:flex; gap:1.4rem; justify-content:center; flex-wrap:wrap; margin:.8rem 0}
+  .winstat div{text-align:center}
+  .winstat b{display:block; font-size:1.5rem; font-weight:normal; color:var(--lamp); font-family:ui-monospace,Menlo,monospace}
+  .winstat small{font-size:.66rem; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-faint); font-family:ui-monospace,Menlo,monospace}
+  .path{display:flex; flex-wrap:wrap; gap:.3rem; justify-content:center; margin:.6rem 0}
+  .path span{
+    font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.66rem; color:var(--ink-dim);
+    border:1px solid var(--line); border-radius:999px; padding:.15rem .55rem;
+  }
+  .path span.hard{color:var(--lamp); border-color:rgba(255,201,122,.5)}
+  .newbadge{
+    display:flex; align-items:center; gap:.7rem; text-align:left;
+    border:1px solid rgba(255,201,122,.45); border-radius:14px; padding:.5rem .95rem;
+    margin:.35rem auto; max-width:26rem; color:var(--lamp); font-style:italic;
+    font-size:.92rem; line-height:1.4; animation:settle .4s;
+  }
+  .newbadge em{font-size:1.2rem; flex:none}
+
+  /* toast */
+  #toast{
+    position:absolute; left:50%; bottom:calc(1.2rem + var(--safe-bot)); transform:translateX(-50%);
+    z-index:40; background:rgba(14,10,7,.94); border:1px solid rgba(255,201,122,.4);
+    color:var(--ink); border-radius:999px; padding:.45rem 1rem; font-style:italic; font-size:.88rem;
+    max-width:88vw; text-align:center; opacity:0; pointer-events:none; transition:opacity .25s, transform .25s;
+  }
+  #toast.on{opacity:1; transform:translateX(-50%) translateY(-4px)}
+
+  /* update whisper */
+  #updateBar{
+    position:absolute; left:0; right:0; bottom:0; z-index:50;
+    background:rgba(255,201,122,.14); border-top:1px solid rgba(255,201,122,.4);
+    padding:.5rem 1rem calc(.5rem + var(--safe-bot)); display:flex; gap:.7rem; align-items:center;
+    font-size:.85rem; font-style:italic; color:var(--lamp);
+  }
+
+  /* wide screens: the margin sits beside the sheet, like a notebook */
+  @media (min-width:56rem) and (min-height:34rem){
+    #play .playmain{display:flex; gap:1.4rem; align-items:flex-start; justify-content:center; flex:1; min-height:0; padding:0 1rem}
+    #play .boardwrap{width:min(58vh,32rem); margin:.4rem 0}
+    #play .side{width:20rem; display:flex; flex-direction:column; min-height:0; padding-top:.4rem}
+    #play .margin{width:100%; margin:0; max-height:none; flex:1}
+    #play .padwrap{width:100%; padding-left:0; padding-right:0}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{animation-duration:.01ms !important; transition-duration:.01ms !important}
+  }
+</style>
+</head>
+<body>
+
+<!-- ========================= HOME ========================= -->
+<section id="home" class="screen">
+  <div class="scroll">
+    <div class="wrap">
+      <header>
+        <p class="kicker">kmay89 / puzzles</p>
+        <h1>The Sudoku Room</h1>
+        <p class="lede">Sudoku that shows its working — watch a puzzle being made,
+        learn the nineteen techniques that solve them, and never be told
+        <i>wrong</i> without being told <i>why</i>.</p>
+        <div class="rankline">
+          <span class="chip lit" id="rankName">Newcomer</span>
+          <span class="bar"><i id="rankBar"></i></span>
+          <span class="chip" id="rankXp">0 xp</span>
+        </div>
+      </header>
+
+      <button class="band card hide" id="contCard" style="grid-template-columns:1fr auto">
+        <span>
+          <b id="contTitle">Carry on</b>
+          <small id="contNote">a puzzle is waiting where you left it</small>
+        </span>
+        <span class="meta" id="contMeta"></span>
+      </button>
+
+      <h2>Choose your evening</h2>
+      <div class="bands" id="bandList"></div>
+
+      <button class="band" id="dailyCard">
+        <span class="dots" id="streakDots"></span>
+        <span>
+          <b>The daily</b>
+          <small id="dailyNote">one puzzle, the same for everyone, every day</small>
+        </span>
+        <span class="meta" id="dailyMeta"></span>
+      </button>
+
+      <h2>Elsewhere in the room</h2>
+      <div class="doors">
+        <button class="door" id="toForge"><b>The Forge ⚒</b>
+          <small>watch a puzzle made from a blank grid — the real algorithm, at your speed</small></button>
+        <button class="door" id="toDojo"><b>The Codex ❧</b>
+          <small>nineteen techniques, each with a real position to practise on</small></button>
+        <button class="door" id="toWall"><b>The Wall ★</b>
+          <small id="wallNote">things worth noticing</small></button>
+        <button class="door" id="toZen"><b>Zen ◍</b>
+          <small>no clock, no red ink, no counting. Just the grid.</small></button>
+      </div>
+
+      <footer>
+        <button class="btn" id="toHow">how this works</button>
+        <p style="margin-top:1.2rem">part of <a href="../">The Solving Room</a> ·
+        <a href="https://github.com/kmay89/puzzles">source</a> · MIT ·
+        free, offline, nothing tracked</p>
+      </footer>
+    </div>
+  </div>
+</section>
+
+<!-- ========================= PLAY ========================= -->
+<section id="play" class="screen">
+  <div class="topbar">
+    <button class="iconbtn" id="backBtn" aria-label="back to the room">‹</button>
+    <span class="chip lit" id="bandChip">Gentle</span>
+    <span class="grow"></span>
+    <span id="clock" aria-live="off">0:00</span>
+    <button class="iconbtn" id="pauseBtn" aria-label="pause">❙❙</button>
+    <button class="iconbtn" id="menuBtn" aria-label="menu">⋯</button>
+  </div>
+
+  <div class="playmain">
+    <div class="boardwrap">
+      <div class="board" id="board" role="grid" aria-label="sudoku grid"></div>
+      <svg id="linkLayer" viewBox="0 0 900 900" aria-hidden="true"></svg>
+      <canvas id="fx" width="600" height="600" aria-hidden="true"></canvas>
+    </div>
+
+    <div class="side">
+      <div class="margin quiet" id="margin"></div>
+      <div class="padwrap">
+        <div class="pad" id="pad"></div>
+        <div class="tools">
+          <button class="tool" id="toolPencil"><em>✎</em>notes</button>
+          <button class="tool" id="toolAuto"><em>⁙</em>fill notes</button>
+          <button class="tool" id="toolErase"><em>⌫</em>erase</button>
+          <button class="tool" id="toolUndo"><em>↶</em>undo</button>
+          <button class="tool" id="toolHint"><em>✦</em>hint</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========================= OVERLAYS ========================= -->
+
+<div class="ov hide" id="ovMenu">
+  <header><h3>Pause</h3><button class="iconbtn" id="menuClose">✕</button></header>
+  <div class="body"><div class="menucol">
+    <button class="btn big lit" id="mResume">back to the puzzle</button>
+    <button class="switch" id="sSound"><i></i>sound</button>
+    <button class="switch" id="sCheck"><i></i>mark my mistakes<small>as you go</small></button>
+    <button class="switch" id="sHighlight"><i></i>light the row, column and box</button>
+    <button class="switch" id="sEcho"><i></i>echo the digit I am holding</button>
+    <button class="switch" id="sAuto"><i></i>keep the pencil marks for me</button>
+    <button class="switch" id="sSlate"><i></i>write on slate, not paper</button>
+    <button class="btn" id="mCheck">check what I have written</button>
+    <button class="btn" id="mRestart">start this puzzle again</button>
+    <button class="btn" id="mNew">a different puzzle</button>
+    <button class="btn" id="mHow">how this works</button>
+    <button class="btn" id="mLeave">leave the puzzle</button>
+  </div></div>
+</div>
+
+<div class="ov hide" id="ovWin">
+  <div class="body"><div class="wrap" style="text-align:center; padding-top:2rem">
+    <p class="kicker" id="winKicker">finished</p>
+    <h1 id="winTitle">Done.</h1>
+    <p class="lede" id="winLede"></p>
+    <div class="winstat">
+      <div><b id="winTime">0:00</b><small>time</small></div>
+      <div><b id="winBand">—</b><small>band</small></div>
+      <div><b id="winXp">+0</b><small>xp</small></div>
+    </div>
+    <p class="kicker">the path through it</p>
+    <div class="path" id="winPath"></div>
+    <div id="winBadges"></div>
+    <div id="winMastery"></div>
+    <div class="rowbtns" style="margin-top:1.2rem">
+      <button class="btn big lit" id="winAgain">another one</button>
+      <button class="btn" id="winHome">back to the room</button>
+    </div>
+  </div></div>
+</div>
+
+<div class="ov hide" id="ovForge">
+  <header><h3>The Forge</h3><button class="iconbtn" id="forgeClose">✕</button></header>
+  <div class="body">
+    <div class="forgegrid" id="forgeBoard"></div>
+    <div class="forgestats" id="forgeStats"></div>
+    <div class="narr" id="forgeNarr"><b>ready</b>Pick a band and press forge. Nothing here is a re-enactment — the grid you watch is the grid you get.</div>
+    <div class="rowbtns">
+      <span class="chip" id="forgeBandChip">Tricky</span>
+      <button class="btn" id="forgeBandBtn">band ›</button>
+      <button class="btn" id="forgeSpeed">speed: measured</button>
+      <button class="btn lit" id="forgeStart">forge one</button>
+      <button class="btn hide" id="forgePlay">play this puzzle</button>
+    </div>
+    <div class="ledger" id="forgeLedger"></div>
+    <div class="wrap"><p style="font-size:.85rem">
+      Three questions make a sudoku. <b>Can this grid be finished?</b> —
+      constraint propagation fills a blank grid at random.
+      <b>Does it still have exactly one answer?</b> — every clue removed is
+      tested by counting solutions, and put back if a second one appears.
+      <b>Can a person finish it?</b> — the same solver you get hints from
+      tries the puzzle with only the techniques this band promises. When all
+      three agree, you have a puzzle.</p></div>
+  </div>
+</div>
+
+<div class="ov hide" id="ovDojo">
+  <header><h3>The Codex</h3><span class="chip" id="dojoCount"></span><button class="iconbtn" id="dojoClose">✕</button></header>
+  <div class="body"><div class="wrap">
+    <p style="font-size:.88rem">Nineteen ways to work out a square, in the order
+    people learn them. Meeting one opens its idea and a real position to
+    practise on; finding it yourself three times, unaided, makes it yours.</p>
+    <div class="techlist" id="codexList"></div>
+  </div></div>
+</div>
+
+<div class="ov hide" id="ovLesson">
+  <header><h3 id="lessonTitle">Lesson</h3><span class="chip" id="lessonState"></span><button class="iconbtn" id="lessonClose">✕</button></header>
+  <div class="body">
+    <div class="wrap"><p id="lessonIdea" style="font-size:.92rem"></p></div>
+    <div class="lessonwrap">
+      <div class="board" id="lessonBoard"></div>
+      <svg id="lessonLinks" viewBox="0 0 900 900" aria-hidden="true" style="position:absolute;inset:0;pointer-events:none"></svg>
+    </div>
+    <div class="prompt" id="lessonPrompt"></div>
+    <div class="rowbtns">
+      <button class="btn" id="lessonReveal">show me</button>
+      <button class="btn" id="lessonApply">apply it</button>
+      <button class="btn" id="lessonNext">another position</button>
+    </div>
+  </div>
+</div>
+
+<div class="ov hide" id="ovWall">
+  <header><h3>The Wall</h3><span class="chip" id="wallCount"></span><button class="iconbtn" id="wallClose">✕</button></header>
+  <div class="body"><div class="wrap"><div class="wall" id="wallList"></div></div></div>
+</div>
+
+<div class="ov hide" id="ovHow">
+  <header><h3>How this works</h3><button class="iconbtn" id="howClose">✕</button></header>
+  <div class="body"><div class="wrap">
+    <h2>The promise</h2>
+    <p>Every puzzle here has exactly one answer, and every puzzle here can be
+    finished by <i>reasoning</i> — never by guessing. That is not a slogan: the
+    generator refuses to ship a grid its own technique library cannot finish,
+    and you can watch it refuse, in The Forge.</p>
+
+    <h2>Playing</h2>
+    <p>Tap a square, then a digit. The <b>notes</b> button switches the pad to
+    pencil marks; <b>fill notes</b> writes every legal candidate for you and
+    keeps them tidy as you go. Undo is unlimited. Nothing is timed unless you
+    want it to be, and Zen mode turns off the clock, the mistake ink and the
+    counting altogether.</p>
+    <p class="mono" style="font-size:.8rem">Keyboard: arrows or WASD to move ·
+    1–9 to write · shift+1–9 for a pencil mark · backspace to erase ·
+    N notes · A fill notes · U undo · H hint · space pause</p>
+
+    <h2>Hints that teach</h2>
+    <p>The hint button is a ladder, not an answer. Press it once and the room
+    names the technique that is available. Press again and it shows you where
+    to look. Press a third time and it explains the argument in plain words and
+    plays the move. Nothing is ever revealed by peeking at the answer — the room
+    finds the move the same way you would.</p>
+
+    <h2>Learning</h2>
+    <p>Each technique the room uses on your behalf joins your codex, with its
+    idea and a real position to practise on. Find a technique yourself three
+    times — in a puzzle that genuinely needed it, without hints — and it is
+    marked <i>mastered</i>, and the room stops explaining it.</p>
+
+    <h2>What it costs</h2>
+    <p>Nothing. There are no ads, no accounts, no subscriptions, no analytics
+    and no server: your progress lives in this browser and nowhere else, and
+    the whole room works offline once loaded. If you clear your browser data it
+    is gone, because there is nowhere else for it to be.</p>
+  </div></div>
+</div>
+
+<div id="toast"></div>
+<div id="updateBar" class="hide"><span>A newer version of the room is ready.</span><button class="btn" id="updateBtn">refresh</button></div>
+
+<script src="core.js"></script>
+<script src="strategies.js"></script>
+<script src="forge.js"></script>
+<script src="lessons.js"></script>
+<script src="badges.js"></script>
+<script src="dojo.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

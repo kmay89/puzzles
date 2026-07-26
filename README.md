@@ -1,10 +1,15 @@
 # The Solving Room
 
-Seven twisty puzzles that scramble and solve themselves in your browser —
-a 2×2, 3×3, 4×4, 5×5, a megaminx, a pyraminx and a skewb — with the real mathematics on
+Puzzles that solve themselves in your browser — and show you how.
+
+Seven twisty puzzles that scramble and solve themselves — a 2×2, 3×3, 4×4,
+5×5, a megaminx, a pyraminx and a skewb — with the real mathematics on
 display: God's algorithm, Kociemba's two-phase algorithm, a map of every
 position, a live statistical engine, a camera scanner, a patient
 turn-by-turn teacher, a sequence lab, and an augmented-reality door.
+Next door, chess taught kindly, sudoku that shows how its puzzles are
+made and teaches the nineteen techniques that solve them, and a domino
+table where four phones make one game.
 
 **Live:** <https://kmay89.github.io/puzzles/>
 
@@ -22,6 +27,11 @@ chess/        the chess room — chess taught kindly: a full 3D board
               (2D too), a patient coach, opening stories, a tournament
               clock, and nearby two-player over WebRTC with no accounts
               (see chess/README.md)
+sudoku/       the sudoku room — puzzles forged in front of you, five
+              difficulties graded by *solving* rather than guessing,
+              nineteen techniques taught from real positions, and a hint
+              button that explains instead of telling
+              (see sudoku/README.md)
 domino/       the domino table — Mexican dominoes, four seats and two
               parejas: a 3D table, an opponent that counts the bones and
               hears every pass, and four phones joined by holding them
@@ -45,6 +55,14 @@ og.png        the social preview
 - No move table is hard-coded anywhere: twists are *discovered* by
   rotating sticker geometry and matching who landed where, and the
   solvers derive their operations through the same geometry.
+- Every **sudoku** is dug from a full grid one clue at a time, and each
+  removal is tested twice: a brute-force solution count (capped at two)
+  for uniqueness, and the technique library for "can a person still
+  finish this?". The difficulty on the label is the hardest technique
+  the puzzle actually needs, measured by solving it — and
+  `sudoku/tools/selftest.js` checks every elimination the solver makes
+  against the brute-force answer, so a technique that lies fails the
+  build.
 
 ## Run it locally
 
