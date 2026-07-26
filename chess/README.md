@@ -60,6 +60,15 @@ rules: MIT-compatible, no build step, no runtime dependency, offline.
 index.html          markup + all styling (the room's warm dark look)
 app.js              the conductor: game flow, clock, coach, tours,
                     persistence, self-healing boot, input
+teach.js            the teaching eyes: forks, pins, skewers, hanging
+                    pieces, back ranks, mate — spotted and named in
+                    plain words, both in lessons and in your own game
+learn.js            the Academy: an 18-lesson course built on retrieval
+                    practice, worked-example fading, interleaving and
+                    SM-2 spacing, with mastery tracked per idea
+skins.js            the look, as data: board colours + pattern, piece
+                    colour + material, markings, plus share codes so a
+                    skin can travel to a friend
 engine.js           the rules of chess, complete: legal move generation
                     (castling, en passant, underpromotion), mate/stalemate,
                     every draw rule, FEN, SAN, and an alpha-beta search
@@ -89,6 +98,14 @@ tools/              dev-only, never shipped:
                     validating every line through the engine
   make-tactics.js   curates + engine-verifies a tactics pack from the
                     CC0 lichess puzzle dump (data not shipped yet)
+  teach-check.js    hand-built positions where the right answer is
+                    obvious to a human, checked against teach.js
+  lesson-check.js   every lesson must load, be solvable by its own rule,
+                    and reject its listed wrong answers — plus the
+                    spacing maths
+  skin-check.js     presets are complete, share codes round-trip, and
+                    hostile input (markup, bad colours, junk numbers)
+                    comes back safe
   make-icons.js     draws the app icons from scratch (analytic raster + 
                     hand-rolled PNG writer)
 ```
@@ -133,5 +150,15 @@ python3 -m http.server 8000
 # open http://localhost:8000/chess/
 ```
 
-Before shipping changes: `node chess/tools/perft.js && node chess/tools/book-check.js`,
-and bump `VERSION` in `sw.js` so installed players hear about it.
+Before shipping changes, run the lot — each one is fast:
+
+```
+node chess/tools/perft.js          # the rules, against published counts
+node chess/tools/book-check.js     # every opening line legal & canonical
+node chess/tools/teach-check.js    # the teaching eyes see what they claim
+node chess/tools/lesson-check.js   # every lesson solvable; spacing maths
+node chess/tools/skin-check.js     # presets, share codes, hostile input
+node chess/tools/crosscheck.js     # (dev dep) agreement with chess.js
+```
+
+…and bump `VERSION` in `sw.js` so installed players hear about it.
