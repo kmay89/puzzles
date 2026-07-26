@@ -141,8 +141,6 @@ const ok = (cond, what, detail) => {
   await page.waitForSelector("#ovLesson:not(.hide)");
   ok((await page.locator("#lessonBoard .cell").count()) === 81, "the lesson draws a board");
   ok((await page.locator("#lessonBoard .pm span.on").count()) > 10, "the lesson pencils in the candidates");
-  /* tap the right squares */
-  const focus = await page.evaluate(() => null); // the room keeps it private; use "show me"
   await page.locator("#lessonReveal").click();
   ok((await page.locator("#lessonBoard .cell.pat").count()) > 0, "'show me' lights the pattern");
   await shot("06-lesson");

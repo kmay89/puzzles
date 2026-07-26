@@ -13,10 +13,10 @@
    the sentence; the codex quotes the technique's `idea`; the grader
    counts which ones a puzzle needs. One description, four uses.
 
-   Soundness is not assumed. tools/test-strategies.js solves thousands
-   of generated puzzles and checks every single elimination against the
+   Soundness is not assumed. tools/selftest.js solves thousands of
+   generated puzzles and checks every single elimination against the
    brute-force answer from core.js: if a technique ever rules out the
-   digit that actually belongs there, the test fails loudly.
+   digit that actually belongs there, the run fails loudly.
 
    No libraries. Browser (window.Strat) and node (module.exports). */
 (function (root) {
@@ -107,7 +107,6 @@ function andList(list) {
 function digitList(mask) { return andList(S.digits(mask).map(String)); }
 
 var ORDINAL = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
-var SUBSET_NAME = ["", "single", "pair", "triple", "quad"];
 
 /* ---------- the techniques ----------
    Each `find` gets the live state and returns a step or null. They are

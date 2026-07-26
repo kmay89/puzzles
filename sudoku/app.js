@@ -193,7 +193,7 @@ function drawLinks(svg, links) {
 
 /* ===================== particles =====================
    Motes of lamplight. They only exist while something is happening. */
-var fxCells = [], fxRunning = false, motes = [];
+var fxRunning = false, motes = [];
 function fxSpawn(i, n, hue) {
   var canvas = $("fx");
   var r = canvas.getBoundingClientRect();
@@ -492,7 +492,7 @@ function celebrateUnits(i) {
 /* ===================== painting the play screen ===================== */
 function render() {
   if (!G) return;
-  var wash = {}, hush = null, pat = {}, cut = {}, hi = {};
+  var wash = {}, pat = {}, cut = {}, hi = {};
   if (prefs.highlight && G.sel >= 0) {
     S.UNITS_OF[G.sel].forEach(function (u) {
       S.UNITS[u].forEach(function (c) { wash[c] = 1; });
@@ -509,7 +509,7 @@ function render() {
   }
   paint(cells, {
     grid: G.grid, given: G.given, pencil: G.pencil, sel: G.sel,
-    wrong: G.wrong, wash: wash, pat: pat, cut: cut, hi: hi, hush: hush,
+    wrong: G.wrong, wash: wash, pat: pat, cut: cut, hi: hi,
     echo: prefs.echo && G.sel >= 0 && G.grid[G.sel] ? G.grid[G.sel] : 0
   });
   drawLinks($("linkLayer"), step && G.hintStage >= 2 ? step.links : null);
@@ -985,8 +985,6 @@ function renderHome() {
   $("dailyNote").textContent = done
     ? "today's is done — " + fmt(done) + ". Come back tomorrow."
     : "today is " + bandName(lvl) + ". One puzzle, the same for everyone.";
-  $("dailyMeta").textContent = (profile.streak.n || 0) + " day" +
-    ((profile.streak.n || 0) === 1 ? "" : "s") + "<br>streak";
   $("dailyMeta").innerHTML = (profile.streak.n || 0) + " day" +
     ((profile.streak.n || 0) === 1 ? "" : "s") + "<br>streak";
   var dots = $("streakDots");
@@ -1019,7 +1017,6 @@ function startBand(band, opts) {
 
 function forgeThen(band, seed, done, opts) {
   var job = F.job({ level: band, seed: seed });
-  var label = $("contNote");
   toast("cutting a fresh " + bandName(band) + "…", 6000);
   (function tick() {
     var more = job.tick(10);
