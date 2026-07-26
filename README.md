@@ -7,8 +7,9 @@ Seven twisty puzzles that scramble and solve themselves — a 2×2, 3×3, 4×4,
 display: God's algorithm, Kociemba's two-phase algorithm, a map of every
 position, a live statistical engine, a camera scanner, a patient
 turn-by-turn teacher, a sequence lab, and an augmented-reality door.
-Next door, chess taught kindly, and sudoku that shows how its puzzles are
-made and teaches the nineteen techniques that solve them.
+Next door, chess taught kindly, sudoku that shows how its puzzles are
+made and teaches the nineteen techniques that solve them, and a domino
+table where four phones make one game.
 
 **Live:** <https://kmay89.github.io/puzzles/>
 
@@ -31,6 +32,10 @@ sudoku/       the sudoku room — puzzles forged in front of you, five
               nineteen techniques taught from real positions, and a hint
               button that explains instead of telling
               (see sudoku/README.md)
+domino/       the domino table — Mexican dominoes, four seats and two
+              parejas: a 3D table, an opponent that counts the bones and
+              hears every pass, and four phones joined by holding them
+              up to each other (see domino/README.md)
 og.png        the social preview
 .nojekyll     serve files exactly as they are
 ```

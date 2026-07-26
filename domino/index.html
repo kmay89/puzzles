@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>The Domino Table — dominó, the way it's played</title>
+<meta name="description" content="Four-player Mexican dominoes in your browser: a real 3D table, partners across from you, an opponent who counts the bones and hears every pass, and four phones joined by holding them up to each other. No accounts, no ads, nothing tracked, works offline.">
+<meta name="theme-color" content="#160f0a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta property="og:title" content="The Domino Table">
+<meta property="og:description" content="Dominó, the way it's played: four seats, two parejas, and nothing in the boneyard. Free, offline, nothing tracked.">
+<style>
+  /* ---------- the room's tokens ----------
+     Six colours and two system typefaces, same discipline as the rest
+     of The Solving Room. The playing surface itself is not styled here
+     — it comes from the skin, at runtime, so the CSS never has an
+     opinion the settings pane can't overrule. */
+  :root{
+    --room:#160f0a;
+    --card:#221812;
+    --card2:#2c2019;
+    --ink:#f4e9d8;
+    --soft:#b39c80;
+    --line:#4a3527;
+    --amber:#f0a83c;
+    --glow:#ffd77a;
+    --good:#3ecf8e;
+    --bad:#e06a52;
+    --blue:#8fb0ff;
+    --shadow:0 6px 24px rgba(0,0,0,.5);
+    --safe-top:env(safe-area-inset-top, 0px);
+    --safe-bot:env(safe-area-inset-bottom, 0px);
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--room); color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:16px; line-height:1.5; overflow:hidden;
+    touch-action:manipulation; user-select:none; -webkit-user-select:none;
+  }
+  button{font:inherit; color:inherit; background:none; border:none; cursor:pointer}
+  .hide{display:none !important}
+  h1,h2,h3{margin:0 0 .4em; line-height:1.2}
+
+  /* ---------- layout ---------- */
+  #app{display:flex; flex-direction:column; height:100%; padding-top:var(--safe-top)}
+  #stage{position:relative; flex:1; min-height:0; overflow:hidden}
+  canvas.surface{position:absolute; inset:0; display:block}
+  #overlay{pointer-events:none}
+
+  /* ---------- the seat strip along the top ---------- */
+  #seats{
+    position:absolute; top:6px; left:6px; right:6px; z-index:4;
+    display:flex; gap:6px; justify-content:center; flex-wrap:wrap; pointer-events:none;
+  }
+  .seat{
+    background:rgba(20,14,10,.74); backdrop-filter:blur(7px);
+    border:1px solid var(--line); border-radius:12px;
+    padding:4px 10px; font-size:.82rem; font-weight:650;
+    display:flex; align-items:center; gap:6px; max-width:31vw;
+    overflow:hidden; white-space:nowrap; text-overflow:ellipsis;
+    transition:box-shadow .2s, border-color .2s, transform .2s;
+  }
+  .seat .bones{font-weight:400; color:var(--soft); font-variant-numeric:tabular-nums}
+  .seat.us{border-color:#5c8f6a}
+  .seat.them{border-color:#8f5c5c}
+  .seat.turn{box-shadow:0 0 0 2px var(--good); transform:translateY(1px)}
+  .seat.you .nm{color:var(--glow)}
+  .seat.gone{opacity:.5}
+  .seat .dot{width:7px;height:7px;border-radius:50%;background:var(--good);flex:none}
+  .seat.gone .dot{background:transparent;box-shadow:inset 0 0 0 1.5px var(--soft)}
+  .seat.bot .dot{background:var(--blue)}
+
+  /* ---------- the score, top corners ---------- */
+  #scoreRail{
+    position:absolute; top:44px; left:8px; right:8px; z-index:4;
+    display:flex; justify-content:space-between; pointer-events:none; font-size:.78rem;
+  }
+  .score{
+    background:rgba(20,14,10,.7); border:1px solid var(--line); border-radius:10px;
+    padding:3px 9px; font-variant-numeric:tabular-nums;
+  }
+  .score b{font-size:1.15em; color:var(--glow)}
+  .score.lead b{color:var(--good)}
+
+  /* ---------- the control tray ---------- */
+  #tray{
+    flex:none; display:flex; gap:8px; padding:8px 10px calc(8px + var(--safe-bot));
+    background:linear-gradient(180deg, rgba(0,0,0,0), var(--card) 34%);
+    align-items:stretch;
+  }
+  .btn{
+    flex:1; min-height:52px; border-radius:14px; background:var(--card2);
+    border:1px solid var(--line); font-weight:650; font-size:.95rem;
+    display:flex; align-items:center; justify-content:center; gap:7px;
+    transition:transform .09s cubic-bezier(.2,.9,.3,1.4), background .15s, box-shadow .15s, opacity .15s;
+    box-shadow:0 2px 0 rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.07);
+    padding:6px 8px; text-align:center; line-height:1.15;
+  }
+  .btn .k{font-size:1.25em; line-height:1}
+  .btn:active,.btn.down{transform:translateY(2px) scale(.975); box-shadow:0 0 0 rgba(0,0,0,.4)}
+  .btn.primary{background:linear-gradient(180deg,#f0a83c,#d2841f); color:#241503; border-color:#a86a16}
+  .btn.primary.pulse{animation:pulse 1.5s ease-in-out infinite}
+  @keyframes pulse{0%,100%{box-shadow:0 2px 0 rgba(0,0,0,.45)}50%{box-shadow:0 2px 0 rgba(0,0,0,.45),0 0 0 6px rgba(240,168,60,.22)}}
+  .btn[disabled]{opacity:.4; pointer-events:none}
+  .btn.narrow{flex:0 0 62px}
+  .btn.wide{flex:2}
+  @media (prefers-reduced-motion:reduce){
+    .btn,.btn.primary.pulse{transition:none; animation:none}
+  }
+
+  /* ---------- the banner that names the moment ---------- */
+  #banner{
+    position:absolute; left:0; right:0; top:38%; z-index:6; text-align:center;
+    pointer-events:none; opacity:0; transition:opacity .3s;
+  }
+  #banner.on{opacity:1}
+  #banner .big{
+    font-size:clamp(2rem,11vw,4.2rem); font-weight:800; letter-spacing:-.02em;
+    text-shadow:0 4px 30px rgba(0,0,0,.8), 0 0 60px rgba(240,168,60,.35);
+    color:var(--glow);
+  }
+  #banner .sub{font-size:1rem; color:var(--ink); opacity:.9; margin-top:.2em; text-shadow:0 2px 12px #000}
+  #banner.slam .big{animation:slam .5s cubic-bezier(.2,1.6,.3,1)}
+  @keyframes slam{0%{transform:scale(2.4) rotate(-7deg); opacity:0}60%{transform:scale(.94)}100%{transform:none}}
+
+  /* ---------- Don Chuy ---------- */
+  #chuy{
+    position:absolute; left:8px; right:8px; bottom:8px; z-index:5;
+    background:rgba(26,18,12,.93); backdrop-filter:blur(9px);
+    border:1px solid var(--line); border-left:3px solid var(--amber);
+    border-radius:13px; padding:9px 12px; font-size:.88rem;
+    box-shadow:var(--shadow); transition:transform .25s, opacity .25s;
+  }
+  #chuy.off{opacity:0; transform:translateY(14px); pointer-events:none}
+  #chuy .head{display:flex; align-items:center; gap:7px; font-weight:700; color:var(--amber); font-size:.8rem; letter-spacing:.04em}
+  #chuy .head .x{margin-left:auto; color:var(--soft); font-weight:400; padding:2px 6px}
+  #chuy p{margin:.35em 0 0}
+  #chuy .why{color:var(--soft); font-size:.84rem}
+
+  /* ---------- modals ---------- */
+  .ov{
+    position:fixed; inset:0; z-index:20; background:rgba(8,5,3,.82);
+    backdrop-filter:blur(4px); display:flex; align-items:center; justify-content:center; padding:14px;
+  }
+  .sheet{
+    background:var(--card); border:1px solid var(--line); border-radius:18px;
+    width:min(560px,100%); max-height:min(88vh,760px); overflow-y:auto;
+    padding:18px; box-shadow:var(--shadow); -webkit-overflow-scrolling:touch;
+  }
+  .sheet h2{font-size:1.3rem}
+  .sheet .lead{color:var(--soft); font-size:.92rem; margin:0 0 14px}
+  .row{display:flex; gap:8px; margin-top:10px; flex-wrap:wrap}
+  .row .btn{min-height:46px}
+  .close{position:sticky; top:0; float:right; font-size:1.4rem; color:var(--soft); padding:0 6px; z-index:2}
+
+  /* option cards */
+  .opts{display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px}
+  .opt{
+    border:1px solid var(--line); border-radius:13px; padding:11px; background:var(--card2);
+    text-align:left; transition:border-color .15s, transform .09s, background .15s;
+  }
+  .opt:active{transform:scale(.98)}
+  .opt.on{border-color:var(--amber); background:#33241a; box-shadow:inset 0 0 0 1px var(--amber)}
+  .opt b{display:block; font-size:.98rem}
+  .opt small{color:var(--soft); font-size:.79rem; line-height:1.35; display:block; margin-top:2px}
+
+  /* sliders and swatches for the settings pane */
+  .fld{margin:12px 0}
+  .fld > label{display:flex; align-items:center; gap:8px; font-size:.86rem; color:var(--soft); margin-bottom:5px}
+  .fld > label b{color:var(--ink); font-weight:650}
+  .fld .val{margin-left:auto; font-variant-numeric:tabular-nums}
+  input[type=range]{width:100%; accent-color:var(--amber); height:26px}
+  .swatches{display:flex; gap:7px; flex-wrap:wrap}
+  .sw{display:flex; flex-direction:column; align-items:center; gap:3px; font-size:.7rem; color:var(--soft)}
+  .sw input[type=color]{
+    width:44px; height:38px; border:1px solid var(--line); border-radius:10px;
+    background:none; padding:2px; cursor:pointer;
+  }
+  input[type=text]{
+    width:100%; background:#180f09; color:var(--ink); border:1px solid var(--line);
+    border-radius:10px; padding:10px 12px; font:inherit; font-size:.9rem;
+  }
+  .mono{font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.76rem; word-break:break-all}
+
+  /* the gallery of tables */
+  .gal{display:grid; grid-template-columns:repeat(auto-fit,minmax(118px,1fr)); gap:8px}
+  .tile{border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--card2); text-align:left}
+  .tile.on{border-color:var(--amber); box-shadow:inset 0 0 0 1px var(--amber)}
+  .tile canvas{display:block; width:100%; height:62px}
+  .tile span{display:block; padding:5px 7px; font-size:.79rem; font-weight:650}
+
+  /* the counting panel */
+  .census{display:grid; grid-template-columns:repeat(7,1fr); gap:5px; margin-top:8px}
+  .cs{background:var(--card2); border:1px solid var(--line); border-radius:9px; padding:5px 2px; text-align:center}
+  .cs b{display:block; font-size:1.05rem; color:var(--glow); font-variant-numeric:tabular-nums}
+  .cs small{font-size:.62rem; color:var(--soft); display:block; line-height:1.2}
+  .cs.none{opacity:.42}
+  .reads{margin-top:10px; font-size:.88rem}
+  .reads li{margin:.25em 0}
+  .reads .mate{color:var(--good)}
+
+  /* the join door */
+  #qr{display:block; margin:10px auto; width:min(260px,72vw); height:auto; border-radius:12px; background:#fff; padding:8px}
+  .code{
+    background:#180f09; border:1px dashed var(--line); border-radius:10px;
+    padding:9px; margin-top:8px; max-height:88px; overflow:auto;
+  }
+  .step{display:flex; gap:10px; align-items:flex-start; margin:11px 0}
+  .step .n{
+    flex:none; width:25px; height:25px; border-radius:50%; background:var(--amber); color:#241503;
+    font-weight:800; display:flex; align-items:center; justify-content:center; font-size:.83rem;
+  }
+  .step div{font-size:.9rem}
+  .step small{color:var(--soft); display:block; font-size:.82rem}
+
+  /* the scorecard */
+  .tally{width:100%; border-collapse:collapse; margin-top:10px; font-size:.88rem}
+  .tally th,.tally td{padding:5px 7px; border-bottom:1px solid var(--line); text-align:right}
+  .tally th:first-child,.tally td:first-child{text-align:left}
+  .tally tr.win td{color:var(--good)}
+  .tally .cap{color:var(--amber); font-size:.8rem}
+
+  /* the splash */
+  #splash{
+    position:fixed; inset:0; z-index:40; background:var(--room);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    padding:22px; text-align:center; transition:opacity .5s;
+  }
+  #splash.gone{opacity:0; pointer-events:none}
+  #splash .title{font-size:clamp(2.1rem,10vw,3.6rem); font-weight:800; letter-spacing:-.02em; color:var(--glow)}
+  #splash .sub{color:var(--soft); max-width:32ch; margin:.5em 0 1.4em; font-size:.96rem}
+  #splash canvas{width:min(300px,78vw); height:110px; margin-bottom:6px}
+  #splash .row{width:min(360px,100%)}
+
+  .note{color:var(--soft); font-size:.83rem; margin-top:10px; line-height:1.45}
+  .warn{color:var(--bad)}
+  .ok{color:var(--good)}
+  #toast{
+    position:absolute; left:50%; transform:translateX(-50%); bottom:96px; z-index:8;
+    background:rgba(26,18,12,.95); border:1px solid var(--line); border-radius:12px;
+    padding:8px 14px; font-size:.88rem; box-shadow:var(--shadow);
+    opacity:0; transition:opacity .25s, transform .25s; pointer-events:none; max-width:88vw; text-align:center;
+  }
+  #toast.on{opacity:1; transform:translateX(-50%) translateY(-6px)}
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="stage">
+    <canvas id="table" class="surface"></canvas>
+    <canvas id="overlay" class="surface"></canvas>
+
+    <div id="seats"></div>
+    <div id="scoreRail">
+      <div class="score" id="scoreUs">Nosotros <b>0</b></div>
+      <div class="score" id="scoreThem">Ellos <b>0</b></div>
+    </div>
+
+    <div id="banner"><div class="big"></div><div class="sub"></div></div>
+    <div id="toast"></div>
+
+    <div id="chuy" class="off">
+      <div class="head"><span>DON CHUY</span><button class="x" id="chuyClose">✕</button></div>
+      <p id="chuySay"></p>
+      <p class="why" id="chuyWhy"></p>
+    </div>
+  </div>
+
+  <div id="tray">
+    <button class="btn narrow" id="btnMenu" title="Menu"><span class="k">☰</span></button>
+    <button class="btn wide primary" id="btnPlay">Play</button>
+    <button class="btn" id="btnHint"><span class="k">💡</span>Hint</button>
+    <button class="btn narrow" id="btnCount" title="What we know"><span class="k">👁</span></button>
+  </div>
+</div>
+
+<!-- ---------- the splash ---------- -->
+<div id="splash">
+  <canvas id="splashCv" width="600" height="220"></canvas>
+  <div class="title">The Domino Table</div>
+  <div class="sub">Dominó the way it is actually played: four seats, your partner across from you, and nothing in the boneyard.</div>
+  <div class="row">
+    <button class="btn primary wide" id="goSolo">Play a match</button>
+    <button class="btn" id="goParty">Four phones</button>
+  </div>
+  <div class="row">
+    <button class="btn" id="goLearn">How it's played</button>
+    <button class="btn" id="goLook">The table</button>
+  </div>
+</div>
+
+<!-- ---------- modals ---------- -->
+<div class="ov hide" id="ovMenu"><div class="sheet">
+  <button class="close" data-close="ovMenu">✕</button>
+  <h2>The table</h2>
+  <p class="lead" id="menuState"></p>
+  <div class="row">
+    <button class="btn" id="mNew">New match</button>
+    <button class="btn" id="mLook">Colours</button>
+  </div>
+  <div class="row">
+    <button class="btn" id="mRules">House rules</button>
+    <button class="btn" id="mLearn">How it's played</button>
+  </div>
+  <div class="row">
+    <button class="btn" id="mParty">Four phones</button>
+    <button class="btn" id="mView">Switch to 2D</button>
+  </div>
+  <p class="note" id="menuNote"></p>
+</div></div>
+
+<div class="ov hide" id="ovRules"><div class="sheet">
+  <button class="close" data-close="ovRules">✕</button>
+  <h2>House rules</h2>
+  <p class="lead">Every cantina plays a slightly different game and each of them will tell you theirs is the real one. They are all right.</p>
+  <div id="rulesForm"></div>
+  <div class="row"><button class="btn primary wide" id="rulesApply">Play by these</button></div>
+  <p class="note">Changing these starts a fresh match.</p>
+</div></div>
+
+<div class="ov hide" id="ovLook"><div class="sheet">
+  <button class="close" data-close="ovLook">✕</button>
+  <h2>The table</h2>
+  <p class="lead">Everything here applies at once, mid-hand. Tap a table to start from it, then make it yours.</p>
+  <div class="gal" id="gallery"></div>
+  <div id="editor"></div>
+  <div class="row">
+    <button class="btn" id="lookShare">Share this table</button>
+    <button class="btn" id="lookPaste">Paste a code</button>
+  </div>
+  <div class="row"><button class="btn" id="lookSave">Keep it</button><button class="btn" id="lookReset">Start over</button></div>
+  <div id="lookOut"></div>
+</div></div>
+
+<div class="ov hide" id="ovLearn"><div class="sheet">
+  <button class="close" data-close="ovLearn">✕</button>
+  <h2>How it's played</h2>
+  <p class="lead">Not a rulebook — the five things that separate someone who knows the rules from someone who can play.</p>
+  <div id="lessons"></div>
+</div></div>
+
+<div class="ov hide" id="ovCount"><div class="sheet">
+  <button class="close" data-close="ovCount">✕</button>
+  <h2>What the table has told us</h2>
+  <p class="lead">Everything on this screen is something you were told out loud. It is here until you are holding it in your head yourself.</p>
+  <div id="countBody"></div>
+</div></div>
+
+<div class="ov hide" id="ovParty"><div class="sheet">
+  <button class="close" data-close="ovParty">✕</button>
+  <h2>Four phones, one table</h2>
+  <div id="partyBody"></div>
+</div></div>
+
+<div class="ov hide" id="ovEnd"><div class="sheet">
+  <button class="close" data-close="ovEnd">✕</button>
+  <h2 id="endTitle"></h2>
+  <p class="lead" id="endLead"></p>
+  <div id="endBody"></div>
+  <div class="row">
+    <button class="btn primary wide" id="endNext">Next hand</button>
+    <button class="btn" id="endLesson">Teach me that</button>
+  </div>
+</div></div>
+
+<script src="rules.js"></script>
+<script src="layout.js"></script>
+<script src="ai.js"></script>
+<script src="coach.js"></script>
+<script src="skins.js"></script>
+<script src="gfx2d.js"></script>
+<script src="gfx3d.js"></script>
+<script src="net.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

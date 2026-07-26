@@ -1,0 +1,17 @@
+{
+  "name": "The Domino Table",
+  "short_name": "Dominó",
+  "description": "Four-player Mexican dominoes: a real 3D table, your partner across from you, an opponent who counts the bones and hears every pass, and four phones joined by holding them up to each other.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#160f0a",
+  "theme_color": "#160f0a",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
