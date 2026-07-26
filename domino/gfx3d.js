@@ -36,8 +36,9 @@ function m4() { return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]); }
    The obvious-looking loop computes b·a instead, and nothing complains.
    The drawing never noticed, because the shader multiplies uProj and
    uView itself — but `pointOnTable` inverts this product to turn a tap
-   back into a place on the table, and inverting the wrong product put
-   every tap somewhere else. Column-major means (row r, col c) lives at
+   back into a place on the table, and inverting the wrong product does
+   not shift the answer slightly: it collapses it, so every pixel comes
+   back as the same point. Column-major means (row r, col c) lives at
    m[c*4 + r], so (a·b)[r][c] = Σk a[k*4 + r] · b[c*4 + k]. */
 function mul(a, b, o) {
   o = o || new Float32Array(16);
@@ -141,7 +142,22 @@ function compile(gl, type, src) {
    The top is two quads rather than one so each half can sample its own
    pip square out of the atlas — which is what lets 28 different bones
    share a single mesh and a single 7-square texture. */
-function boneMesh(gl) {
+/* The geometry, as plain arrays and no GL — so `tools/bone-check.js` can
+   check the one thing about it that cannot be eyeballed reliably.
+
+   Every quad is given a normal *and* a corner order, and the two have to
+   agree: walking the corners must wind anticlockwise seen from the side
+   the normal points. When they disagree, back-face culling throws away
+   exactly the faces you meant to see and keeps the ones you meant to
+   hide.
+
+   All eight side and chamfer quads were wound backwards here. The two
+   faces and the back were right, so a bone still looked like a bone from
+   directly above — but its edges were culled and you saw *through* them
+   into the far inner wall, which read as grey wedges hanging off both
+   ends of every bone at once. Both ends: impossible for a solid box, and
+   the tell that this was winding and not lighting. */
+function boneGeometry() {
   var hx = L.LEN / 2, hy = L.WID / 2, hz = 0.16, c = 0.055;
   var P = [], N = [], U = [], I = [];
   function quad(a, b, cc, d, n, uvs) {
@@ -163,18 +179,23 @@ function boneMesh(gl) {
        [[0, 1], [1, 1], [1, 0], [0, 0]]);
   /* the chamfer: four flat cuts around the top edge */
   var d = 0.7071;
-  quad([-ix, -iy, hz], [-hx, -hy + c, hz - c], [-hx, hy - c, hz - c], [-ix, iy, hz], [-d, 0, d]);
-  quad([ix, -iy, hz], [ix, iy, hz], [hx, hy - c, hz - c], [hx, -hy + c, hz - c], [d, 0, d]);
-  quad([-ix, -iy, hz], [ix, -iy, hz], [hx - c, -hy, hz - c], [-hx + c, -hy, hz - c], [0, -d, d]);
-  quad([-ix, iy, hz], [-hx + c, hy, hz - c], [hx - c, hy, hz - c], [ix, iy, hz], [0, d, d]);
+  quad([-ix, -iy, hz], [-ix, iy, hz], [-hx, hy - c, hz - c], [-hx, -hy + c, hz - c], [-d, 0, d]);
+  quad([ix, -iy, hz], [hx, -hy + c, hz - c], [hx, hy - c, hz - c], [ix, iy, hz], [d, 0, d]);
+  quad([-ix, -iy, hz], [-hx + c, -hy, hz - c], [hx - c, -hy, hz - c], [ix, -iy, hz], [0, -d, d]);
+  quad([-ix, iy, hz], [ix, iy, hz], [hx - c, hy, hz - c], [-hx + c, hy, hz - c], [0, d, d]);
   /* the four sides, straight down to the felt */
-  quad([-hx, -hy + c, hz - c], [-hx, -hy + c, -hz], [-hx, hy - c, -hz], [-hx, hy - c, hz - c], [-1, 0, 0]);
-  quad([hx, -hy + c, hz - c], [hx, hy - c, hz - c], [hx, hy - c, -hz], [hx, -hy + c, -hz], [1, 0, 0]);
-  quad([-hx + c, -hy, hz - c], [hx - c, -hy, hz - c], [hx - c, -hy, -hz], [-hx + c, -hy, -hz], [0, -1, 0]);
-  quad([-hx + c, hy, hz - c], [-hx + c, hy, -hz], [hx - c, hy, -hz], [hx - c, hy, hz - c], [0, 1, 0]);
+  quad([-hx, -hy + c, hz - c], [-hx, hy - c, hz - c], [-hx, hy - c, -hz], [-hx, -hy + c, -hz], [-1, 0, 0]);
+  quad([hx, -hy + c, hz - c], [hx, -hy + c, -hz], [hx, hy - c, -hz], [hx, hy - c, hz - c], [1, 0, 0]);
+  quad([-hx + c, -hy, hz - c], [-hx + c, -hy, -hz], [hx - c, -hy, -hz], [hx - c, -hy, hz - c], [0, -1, 0]);
+  quad([-hx + c, hy, hz - c], [hx - c, hy, hz - c], [hx - c, hy, -hz], [-hx + c, hy, -hz], [0, 1, 0]);
   /* and the back */
   quad([-hx, -hy, -hz], [-hx, hy, -hz], [hx, hy, -hz], [hx, -hy, -hz], [0, 0, -1]);
+  return { P: P, N: N, U: U, I: I };
+}
 
+function boneMesh(gl) {
+  var g = boneGeometry();
+  var P = g.P, N = g.N, U = g.U, I = g.I;
   var mesh = {
     pos: gl.createBuffer(), nrm: gl.createBuffer(), uv: gl.createBuffer(), idx: gl.createBuffer(),
     count: I.length, uvData: new Float32Array(U)
@@ -604,6 +625,10 @@ Gfx3D.prototype.destroy = function () {
   } catch (e) { /* the context may already be gone; nothing to free */ }
   this.ok = false;
 };
+
+/* exposed so `tools/bone-check.js` can check the winding in node, where
+   there is no WebGL to upload it to */
+Gfx3D.boneGeometry = boneGeometry;
 
 if (typeof module !== "undefined" && module.exports) module.exports = Gfx3D;
 else root.Gfx3D = Gfx3D;

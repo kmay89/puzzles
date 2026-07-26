@@ -73,12 +73,27 @@
   .seat.you .nm{color:var(--glow)}
   .seat.gone{opacity:.5}
   .seat .dot{width:7px;height:7px;border-radius:50%;background:var(--good);flex:none}
+  /* the seat that is deciding, so three machines never move at once
+     without the table being able to see which one is up */
+  .seat.thinking{border-color:var(--amber); box-shadow:0 0 0 2px rgba(240,168,60,.35)}
+  .seat.thinking .dot{background:var(--amber); animation:blink 1s ease-in-out infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
   .seat.gone .dot{background:transparent;box-shadow:inset 0 0 0 1.5px var(--soft)}
   .seat.bot .dot{background:var(--blue)}
 
+  /* the running commentary — who is deciding, and what they just did */
+  #lastPlay{
+    position:absolute; top:38px; left:0; right:0; z-index:4; text-align:center;
+    font-size:.8rem; pointer-events:none; min-height:1.2em;
+    text-shadow:0 1px 6px rgba(0,0,0,.85);
+  }
+  #lastPlay.us{color:var(--good)}
+  #lastPlay.them{color:var(--bad)}
+  #lastPlay.thinking{color:var(--amber); font-style:italic}
+
   /* ---------- the score, top corners ---------- */
   #scoreRail{
-    position:absolute; top:44px; left:8px; right:8px; z-index:4;
+    position:absolute; top:60px; left:8px; right:8px; z-index:4;
     display:flex; justify-content:space-between; pointer-events:none; font-size:.78rem;
   }
   .score{
@@ -258,6 +273,7 @@
     <canvas id="overlay" class="surface"></canvas>
 
     <div id="seats"></div>
+    <div id="lastPlay"></div>
     <div id="scoreRail">
       <div class="score" id="scoreUs">Nosotros <b>0</b></div>
       <div class="score" id="scoreThem">Ellos <b>0</b></div>

@@ -155,6 +155,75 @@ var VARIED = "(() => { const c = document.getElementById('table');" +
   ok("the hand plays on by itself", played >= 2, played + " bones down");
   ok("and nothing has thrown", errors.length === 0, errors.slice(0, 3).join(" | "));
 
+  /* ---------- the table has a pulse ----------
+     Three machines deciding as fast as they can is unreadable: bones
+     appear and you work out backwards who put them there. A turn is
+     three beats now — the seat says it is thinking, the play lands, and
+     there is a pause to look at it before the next one starts. Measured
+     rather than assumed, because a pace constant nobody reads is worth
+     nothing. */
+  var beats = await page.evaluate(`(async () => {
+    const d = window.__dt();
+    const stamps = [];
+    let last = d.G.view.line.length;
+    const t0 = performance.now();
+    while (performance.now() - t0 < 14000 && stamps.length < 4) {
+      await new Promise(r => setTimeout(r, 30));
+      /* Keep the hand moving. It is the player's turn a quarter of the
+         time and the room is quite right to sit there waiting — but a
+         stalled window measures nothing, and the first version of this
+         check reported "0 plays seen" for exactly that reason. */
+      const g = d.G;
+      if (g.view && g.view.turn === g.mySeat && !g.busy) {
+        const mv = window.AI.movesFor(g.view);
+        if (mv.length) d.tryPlay(mv[0].tile, mv[0].end);
+        else d.doPass(g.mySeat);
+      }
+      const n = d.G.view.line.length;
+      if (n > last) { stamps.push(performance.now()); last = n; }
+    }
+    const gaps = [];
+    for (let i = 1; i < stamps.length; i++) gaps.push(stamps[i] - stamps[i-1]);
+    return { gaps: gaps, n: stamps.length };
+  })()`);
+
+  ok("bones keep going down while you watch", beats.n >= 2, beats.n + " plays seen");
+  if (beats.gaps.length) {
+    var quickest = Math.min.apply(null, beats.gaps);
+    /* relaxed is 900ms of thinking plus up to 700 of spread plus 750 to
+       settle, so the tightest honest gap is about 1.6s; under a second
+       means the beats are not being waited on at all */
+    ok("and never faster than a person could follow", quickest > 950,
+       "quickest gap " + Math.round(quickest) + "ms");
+    console.log("      gaps between plays: " +
+                beats.gaps.map(function (g) { return Math.round(g) + "ms"; }).join(", "));
+  }
+
+  /* and the table says who is doing what */
+  var sawThinking = await page.evaluate(`(async () => {
+    const t0 = performance.now();
+    while (performance.now() - t0 < 8000) {
+      const el = document.getElementById('lastPlay');
+      if (el && /thinking/.test(el.className)) return el.textContent;
+      await new Promise(r => setTimeout(r, 40));
+    }
+    return null;
+  })()`);
+  ok("it names whoever is deciding", !!sawThinking && /thinking/i.test(sawThinking), sawThinking);
+  /* and then what they did — waited for, not snatched, because the
+     caption is showing "…is thinking" for a good second either side of
+     the play and reading it at the wrong instant proves nothing */
+  var sawPlay = await page.evaluate(`(async () => {
+    const t0 = performance.now();
+    while (performance.now() - t0 < 8000) {
+      const t = document.getElementById('lastPlay').textContent || "";
+      if (/played the|paso/i.test(t)) return t;
+      await new Promise(r => setTimeout(r, 40));
+    }
+    return document.getElementById('lastPlay').textContent;
+  })()`);
+  ok("and says what they did", /played the \d\|\d|paso/i.test(sawPlay || ""), sawPlay);
+
   /* ---------- a tap on the 3D table lands where it looks ----------
      `pointOnTable` inverts the view-projection to turn a pixel back
      into a place on the felt. It went untested at first, and it was
@@ -263,6 +332,27 @@ var VARIED = "(() => { const c = document.getElementById('table');" +
   await page.waitForTimeout(300);
   var tgt = await page.evaluate("window.__dt().P.rules.target");
   ok("and picking one takes", tgt === 50, tgt + "");
+
+  /* Every row must show what is currently chosen. Three of these rows do
+     not live in P.rules — level and pace are preferences on P itself —
+     and a row that reads the wrong place still renders perfectly, just
+     with nothing lit up. Counting the lit buttons is what catches it:
+     one per row, no more and no fewer. */
+  var lit = await page.evaluate(
+    "(function(){var rows={},b=document.querySelectorAll('#rulesForm [data-rk]');" +
+    "for(var i=0;i<b.length;i++){var k=b[i].getAttribute('data-rk');" +
+    "rows[k]=(rows[k]||0)+(b[i].classList.contains('on')?1:0);}return rows;})()");
+  var keys = Object.keys(lit), everyRowLit = keys.length > 0;
+  for (var ri = 0; ri < keys.length; ri++) if (lit[keys[ri]] !== 1) everyRowLit = false;
+  ok("every rule row shows its current setting", everyRowLit,
+    keys.map(function (k) { return k + "=" + lit[k]; }).join(" "));
+
+  await page.click("[data-rk=pace][data-rv='quick']");
+  await page.waitForTimeout(300);
+  var pc = await page.evaluate("window.__dt().P.pace");
+  ok("the pace can be changed", pc === "quick", pc + "");
+  await page.click("[data-rk=pace][data-rv='relaxed']");
+  await page.waitForTimeout(200);
   await page.click("[data-close=ovRules]");
 
   /* ---------- how it's played ---------- */
