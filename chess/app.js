@@ -943,6 +943,11 @@ function lanRematch() {
    goes through feedCode() and advances the handshake by itself.
    `linkStep`: 0 choosing · 1 showing my code · 2 waiting to connect */
 var linkStep = 0, linkRole = null, scanOn = false, scanStop = null, clipWatch = 0;
+/* guards against doing the handshake twice: what I'm showing (so I never
+   feed myself my own code), the last code I acted on, whether an async
+   step is in flight, and a random token used to settle it when both
+   people happen to open a board at the same moment. */
+var myCodeRaw = "", lastFed = "", lastFedAt = 0, linkBusy = false, lanNonce = "";
 
 function scanSupported() {
   return ("BarcodeDetector" in window) && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
@@ -951,6 +956,7 @@ function openLink() {
   hideAllOverlays();
   stopScan();
   linkStep = 0; linkRole = null;
+  myCodeRaw = ""; lastFed = ""; linkBusy = false;
   $("ovLink").classList.remove("hide");
   $("linkChoose").classList.remove("hide");
   $("linkStage").classList.add("hide");
@@ -972,6 +978,15 @@ function linkStage(opts) {
   $("linkStage").classList.toggle("waiting", !!opts.waiting);
   $("qrFrame").classList.toggle("hide", !opts.showCode);
   $("linkCam").classList.toggle("hide", !scanSupported());
+  /* until I have a code of my own there is nothing to send or copy —
+     offering it anyway is what made the no-camera screen confusing */
+  var mine = !!opts.showCode;
+  $("linkShare").classList.toggle("hide", !mine);
+  $("linkCopy").classList.toggle("hide", !mine);
+  $("linkCodeOut").classList.toggle("hide", !mine);
+  $("codeDropLabel").textContent = mine
+    ? "Type or copy the code by hand"
+    : "Paste their code by hand";
   var r1 = $("rail1"), r2 = $("rail2"), r3 = $("rail3");
   r1.className = "railStep" + (opts.step === 1 ? " on" : " done");
   r2.className = "railStep" + (opts.step === 2 ? " on" : (opts.step > 2 ? " done" : ""));
@@ -984,6 +999,7 @@ function linkStage(opts) {
    consumed by a host who is already mid-handshake, and a link would
    reload their page and throw the connection away. */
 function showMyCode(rawCode, asLink) {
+  myCodeRaw = normCode(rawCode) || "";
   var shown = asLink ? Net.url(rawCode) : rawCode;
   $("linkCodeOut").value = shown;
   $("qrWait").classList.add("hide");
@@ -1001,19 +1017,24 @@ function hostFlow(resume) {
   var doHost = function (clockStr, side) {
     var s = side === "r" ? (Math.random() < 0.5 ? 1 : -1) : (side === "b" ? -1 : 1);
     linkRole = "host"; linkStep = 1;
+    lanNonce = String(Math.floor(Math.random() * 2147483647));
     lanCfg = { mySide: s, clockStr: clockStr,
                sans: resume && G && mode === "lan" ? G.played.map(function (r) { return r.san; }) : [],
                wMs: resume && clock.on ? Math.round(clock.w) : undefined,
                bMs: resume && clock.on ? Math.round(clock.b) : undefined };
     $("ovLink").classList.remove("hide");
     linkStage({ step: 1, showCode: true, title: "Show this to your friend",
-      how: "On their device: <b>Play together</b> → <b>Join their board</b>, then point their camera at this code." });
+      how: scanSupported()
+        ? "On their device: <b>Play together</b> → <b>Join their board</b>, then point their camera at this code."
+        : "Tap <b>Share</b> to send them the link — tapping it opens their board already joining. Then they'll send you a short answer code to paste." });
     codeBusy("making your code…");
-    Net.host({ name: lanMy }).then(function (code) {
+    Net.host({ name: lanMy, n: lanNonce }).then(function (code) {
       showMyCode(code, true);           /* invite: a tappable link */
       /* the host watches for the reply straight away, so the two phones
-         can simply face each other */
-      startScan();
+         can simply face each other; where there's no camera, the
+         clipboard watcher is what catches their pasted answer */
+      if (scanSupported()) startScan();
+      else $("codeDrop").open = true;
       startClipWatch();
     }).catch(function () {
       codeBusy("that didn't work — close and try again");
@@ -1026,67 +1047,154 @@ function hostFlow(resume) {
 /* --- joiner --- */
 function joinFlow(prefill) {
   grabName();
-  linkRole = "join"; linkStep = 1;
+  linkRole = "join"; linkStep = 1; myCodeRaw = ""; lastFed = "";
   $("ovLink").classList.remove("hide");
-  linkStage({ step: 1, showCode: false,
-    title: "Point at their code",
-    how: "Hold your camera up to your friend's screen — or tap <b>Paste a code</b> if they sent it to you." });
-  if (prefill) { feedCode(prefill); return; }
-  startScan();                 /* the camera opens itself: nothing to tap */
+  if (prefill) {
+    linkStage({ step: 1, showCode: false, title: "Joining…", how: "Reading their invite." });
+    feedCode(prefill);
+    return;
+  }
+  if (scanSupported()) {
+    linkStage({ step: 1, showCode: false,
+      title: "Point at their code",
+      how: "Hold your camera up to your friend's screen — or tap <b>Paste a code</b> if they sent it to you." });
+    startScan();               /* the camera opens itself: nothing to tap */
+  } else {
+    /* no camera here (iPhones can't scan inside a web page) — so lead
+       with the way that does work rather than showing an empty frame */
+    pasteFirst("Paste their invite",
+      "This browser can't use the camera inside a page. Ask them to tap <b>Share</b> on their board and send you the link — then paste it below (or just tap the link they send).");
+  }
   startClipWatch();
 }
 
-/* --- the one door every code comes through --- */
+/* the paste-led version of a step, used whenever scanning isn't possible */
+function pasteFirst(title, how) {
+  linkStage({ step: 1, showCode: false, title: title, how: how,
+    note: "Tip: if you copy the code, this page picks it up on its own." });
+  $("codeDrop").open = true;
+  var box = $("linkCodeIn");
+  if (box) setTimeout(function () { try { box.focus(); } catch (e) {} }, 250);
+}
+/* shown once the joiner has an answer but no camera to be scanned with */
+function sendItInstead(line) {
+  $("linkHow").innerHTML = line + " tap <b>Share</b> or <b>Copy</b> below — they'll paste it on their board.";
+  $("codeDrop").open = true;
+}
+
+/* --- the one door every code comes through ---
+   Everything (scanned, pasted, clipboard, typed, tapped link) arrives
+   here. Three things kept going wrong before, and each has a guard now:
+
+     · It used to decide what to do from *my role* rather than from what
+       the code actually is, so a host who scanned another invite tried
+       to treat it as an answer and failed forever.
+     · Two people can both tap "Host" — then both phones show an invite
+       and neither is listening for one. Rather than make anyone start
+       over, each invite carries a random token; whoever's is larger
+       silently gives up hosting and joins the other. Both sides work it
+       out the same way without a word passing between them.
+     · The same code could be fed twice (camera + clipboard, or a second
+       glance at the same screen), which tore down a half-built
+       connection. Now a code in flight, a repeat, or my own code are
+       all ignored. */
+function normCode(text) {
+  var m = String(text || "").replace(/\s+/g, "").match(/CHESS(1|2)\.[A-Za-z0-9_-]+/);
+  return m ? m[0] : null;
+}
 function feedCode(text) {
-  if (!text || !/CHESS(1|2)\./.test(text)) return false;
-  if (linkRole === "join" && linkStep === 1) {
-    stopScan();
-    linkStage({ step: 2, showCode: true, waiting: true, title: "Now show them yours",
-      how: "Almost there — let your friend's camera see this code and you're playing.",
-      note: "Keep this open; the boards link themselves the moment they see it." });
-    codeBusy("answering…");
-    linkStep = 2;
-    Net.join(text).then(function (res) {
-      if (!res) {
-        toast("Couldn't read that invite — ask for a fresh one.");
-        joinFlow(null);
-        return;
-      }
-      /* the invite carried their name: greet them by it, so you can see
-         at a glance that you scanned the right board */
-      var host = res.meta && res.meta.name ? String(res.meta.name).slice(0, 18) : "";
-      if (host) {
-        lanOpp = host;
-        $("linkTitle").textContent = "Found " + host + " — now show them yours";
-        $("linkHow").innerHTML = "Let <b>" + escHtml(host) + "</b>'s camera see this code and you're playing.";
-      }
-      showMyCode(res.reply, false);     /* reply: a bare code, never a link */
-    }).catch(function () {
-      toast("Couldn't read that invite — try again.");
-      joinFlow(null);
-    });
-    return true;
+  var code = normCode(text);
+  if (!code) return false;
+  if (linkBusy) return true;                                   /* one at a time */
+  if (code === myCodeRaw) return true;                         /* that's mine */
+  if (code === lastFed && Date.now() - lastFedAt < 30000) return true;
+  lastFed = code; lastFedAt = Date.now();
+  linkBusy = true;
+  Net.decode(code).then(function (o) {
+    linkBusy = false;
+    if (!o || !o.k) { linkOops("That code was unreadable — ask for a fresh one."); return; }
+    if (o.k === "invite") return takeInvite(code, o);
+    if (o.k === "reply") return takeReply(code);
+    linkOops("That code isn't one of ours.");
+  }).catch(function () {
+    linkBusy = false;
+    linkOops("That code was unreadable — ask for a fresh one.");
+  });
+  return true;
+}
+function linkOops(msg) {
+  toast(msg);
+  lastFed = "";                    /* let them try the same code again */
+  if (linkRole && linkStep < 3) startScan();
+}
+
+/* an invite: I become the joiner — unless I'm already hosting, in which
+   case the tokens decide which of us yields */
+function takeInvite(code, o) {
+  if (linkRole === "host") {
+    var theirs = (o.meta && o.meta.n) ? String(o.meta.n) : "";
+    if (!theirs || theirs === lanNonce) { startScan(); return; }
+    if (lanNonce < theirs) {
+      /* I keep the board; they'll stand down on their side the same way */
+      $("linkHow").innerHTML = "You both opened a board — keeping <b>yours</b>. Their phone is standing down; just keep facing each other.";
+      startScan();
+      return;
+    }
+    /* I yield: close my half-built board and join theirs instead */
+    Net.close();
+    linkRole = "join"; linkStep = 1; myCodeRaw = "";
+    toast("You both opened a board — joining theirs instead.");
   }
-  if (linkRole === "host" && linkStep === 1) {
-    stopScan();
-    linkStep = 2;
-    linkStage({ step: 2, showCode: true, waiting: true, title: "Got it — linking…",
-      how: "Their answer came through. Shaking hands…" });
-    codeBusy("linking…");
-    Net.acceptReply(text).then(function (ok) {
-      if (!ok) {
-        toast("That code didn't match this board — showing yours again.");
-        linkStep = 1;
-        linkStage({ step: 1, showCode: true, title: "Show this to your friend",
-          how: "On their device: <b>Play together</b> → <b>Join their board</b>." });
-        showMyCode($("linkCodeOut").value);
-        startScan();
-      }
-      /* success continues in Net.onLink → celebrateLink() */
-    });
-    return true;
+  if (linkStep >= 2 && linkRole === "join") { startScan(); return; }  /* already answered */
+  linkRole = "join";
+  stopScan();
+  linkStep = 2;
+  linkStage({ step: 2, showCode: true, waiting: true, title: "Now show them yours",
+    how: "Almost there — let your friend's camera see this code and you're playing.",
+    note: "Keep this open; the boards link themselves the moment they see it." });
+  codeBusy("answering…");
+  Net.join(code).then(function (res) {
+    if (!res) { linkStep = 1; linkOops("Couldn't read that invite — ask for a fresh one."); joinFlow(null); return; }
+    var host = res.meta && res.meta.name ? String(res.meta.name).slice(0, 18) : "";
+    if (host) {
+      lanOpp = host;
+      $("linkTitle").textContent = "Found " + host + " — now show them yours";
+      $("linkHow").innerHTML = "Let <b>" + escHtml(host) + "</b>'s camera see this code and you're playing.";
+    }
+    showMyCode(res.reply, false);      /* reply: a bare code, never a link */
+    if (!scanSupported()) sendItInstead("Send this answer back to them:");
+  }).catch(function () {
+    linkStep = 1;
+    linkOops("Couldn't read that invite — try again.");
+    joinFlow(null);
+  });
+}
+
+/* an answer: only the host who made the matching invite can use it */
+function takeReply(code) {
+  if (linkRole !== "host") {
+    linkOops("That's an answer code — it only works on the board that made the invite.");
+    return;
   }
-  return false;
+  stopScan();
+  linkStep = 2;
+  linkStage({ step: 2, showCode: true, waiting: true, title: "Got it — linking…",
+    how: "Their answer came through. Shaking hands…" });
+  codeBusy("linking…");
+  Net.acceptReply(code).then(function (ok) {
+    if (!ok) {
+      linkStep = 1;
+      lastFed = "";
+      linkStage({ step: 1, showCode: true, title: "Show this to your friend",
+        how: "That answer was for a different board — here's yours again." });
+      showMyCode(myCodeRaw, true);
+      startScan();
+    }
+    /* success continues in Net.onLink → celebrateLink() */
+  }).catch(function () {
+    linkStep = 1; lastFed = "";
+    linkOops("That answer didn't fit this board.");
+  });
 }
 
 /* --- the live camera --- */
@@ -1115,10 +1223,21 @@ function startScan() {
         if (stopped) return;
         var hit = codes && codes.filter(function (c) { return /CHESS(1|2)\./.test(c.rawValue); })[0];
         if (hit) {
-          frame.classList.add("found");
-          $("camHint").textContent = "got it!";
-          snd("hint");
-          feedCode(hit.rawValue);
+          var mine = normCode(hit.rawValue) === myCodeRaw;
+          if (!mine) {
+            frame.classList.add("found");
+            $("camHint").textContent = "got it!";
+            snd("hint");
+            feedCode(hit.rawValue);
+          }
+          /* keep looking: if that code wasn't for us (our own screen in
+             shot, or a board that stood down) the hunt must go on */
+          setTimeout(function () {
+            if (stopped) return;
+            frame.classList.remove("found");
+            $("camHint").textContent = "looking for their code…";
+            poll();
+          }, mine ? 400 : 1500);
           return;
         }
         setTimeout(poll, 220);
@@ -1126,7 +1245,14 @@ function startScan() {
     })();
   }).catch(function () {
     scanStop();
-    $("linkNote").textContent = "No camera here — tap “Paste a code” instead, or send yours with Share.";
+    /* permission refused or no lens: switch to the path that still works */
+    if (linkRole === "join" && linkStep === 1) {
+      pasteFirst("Paste their invite",
+        "No camera available — ask them to tap <b>Share</b> on their board and send you the link, then paste it here.");
+    } else {
+      $("linkNote").textContent = "No camera here — use Share or Copy, and paste what they send back.";
+      $("codeDrop").open = true;
+    }
   });
 }
 function stopScan() {
@@ -1143,7 +1269,8 @@ function startClipWatch() {
   clipWatch = setInterval(function () {
     if (document.visibilityState !== "visible") return;
     navigator.clipboard.readText().then(function (t) {
-      if (t && /CHESS(1|2)\./.test(t) && t !== $("linkCodeOut").value) feedCode(t);
+      var c = normCode(t);
+      if (c && c !== myCodeRaw) feedCode(c);
     }).catch(function () { stopClipWatch(); });   /* permission denied: stop asking */
   }, 1200);
 }
@@ -2163,7 +2290,9 @@ window.__cr = { get game() { return G; }, Chess: Chess, Book: Book, Net: Net,
   Teach: Teach, Learn: Learn, Skins: Skins,
   get skin() { return skin; }, applySkin: applySkin,
   get lesson() { return lesson; }, startLesson: startLesson, openAcademy: openAcademy,
-  openStudio: openStudio,
+  openStudio: openStudio, openLink: openLink, feedCode: feedCode,
+  scanSupported: scanSupported, commitMove: commitMove,
+  get lanNonce() { return lanNonce; }, get lanSide() { return lanSide; },
   get mode() { return mode; }, startGame: startGame, get renderer() { return R; },
   feedCode: feedCode, openLink: openLink };   /* the join flow's one door, for tests */
 })();
