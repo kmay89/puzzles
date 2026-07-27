@@ -26,7 +26,8 @@ room/         the solving room itself (see room/README.md for the
               architecture: engine, solvers, worker, map, scanner, AR)
 chess/        the chess room — chess taught kindly: a full 3D board
               (2D too), a patient coach, opening stories, a tournament
-              clock, and nearby two-player over WebRTC with no accounts
+              clock, and nearby two-player over WebRTC with no accounts,
+              joined by reading out four letters
               (see chess/README.md)
 sudoku/       the sudoku room — puzzles forged in front of you, five
               difficulties graded by *solving* rather than guessing,
@@ -36,7 +37,7 @@ sudoku/       the sudoku room — puzzles forged in front of you, five
 domino/       the domino table — dominoes on a table of four chairs,
               cantina style: two parejas, a 3D table, an opponent that
               counts the bones and hears every pass, and four phones
-              joined by holding them up to each other
+              joined by typing the same four letters
               (see domino/README.md)
 library/      the reading room — a voxel engine written from scratch:
               walk an original library about press freedom, or drop in
@@ -46,6 +47,29 @@ library/      the reading room — a voxel engine written from scratch:
 og.png        the social preview
 .nojekyll     serve files exactly as they are
 ```
+
+## One front door
+
+Both games that two people can play together are joined the same way:
+whoever starts it reads out four letters and everybody else types them.
+The four letters buy nothing but a place to leave a WebRTC handshake —
+about 600 characters, and impossible to read across a table — and once
+two devices have shaken hands they talk directly to each other. Nothing
+about a game ever passes through it.
+
+This repo is served by GitHub Pages, which has no server-side anything,
+so the mailbox lives on the main site
+([kmay89.com/api/room](https://kmay89.com/), source in
+[kmay89/ABOUT](https://github.com/kmay89/ABOUT)) and these pages reach
+it cross-origin. If it is out of reach — offline, on `file://`, or on a
+fork — both games fall back by themselves to the handshake they always
+had, a code you scan or paste, and say so.
+
+The link also watches itself: a heartbeat on the same channel as the
+game, and, when a link dies, both sides finding each other again under
+*the same four letters* while the game re-states itself. A chair keeps
+its seat, a board keeps its position and clocks, and nobody has to read
+out a new code.
 
 ## Why it's honest
 

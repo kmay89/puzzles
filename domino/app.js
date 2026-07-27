@@ -14,7 +14,11 @@
 "use strict";
 
 var R = window.Rules, L = window.Layout, AI = window.AI, C = window.Coach,
-    Sk = window.Skins, Net = window.Net;
+    Sk = window.Skins, Net = window.Net, Room = window.Room;
+
+/* who this table is, as far as the shared front door is concerned
+   (see room.js — the same four-letter door the chess room uses) */
+Room.configure({ game: "domino", seats: 4, label: "table" });
 
 /* ---------- the small change ---------- */
 function $(id) { return document.getElementById(id); }
@@ -445,6 +449,10 @@ function refreshView() {
 
 /* ---------- a hand begins ---------- */
 function newMatch() {
+  /* the hand is dealt: the table stops advertising itself but keeps its
+     four letters, because that is the address latecomers — and anyone
+     whose phone locked — come back to */
+  if (G.mode === "host") Net.roomStarted();
   G.match = R.newMatch({ seed: (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0, rules: P.rules });
   G.handNo = 0;
   nextHand(true);
@@ -908,24 +916,40 @@ press($("lookReset"), function () {
 function showParty() {
   var body = $("partyBody");
   if (Net.role === "off") {
+    var back = Room.recall();
     body.innerHTML =
-      "<p class='lead'>One phone is the table — it deals, it keeps the score. The other three sit down at it. Empty chairs are played by the house until somebody takes them.</p>" +
+      "<p class='lead'>One phone is the table — it deals, it keeps the score. The other three sit down at it by typing four letters. Empty chairs are played by the house until somebody takes them.</p>" +
       "<div class='fld'><label><b>Your name</b></label><input type='text' id='pName' maxlength='14' value='" + esc(P.name) + "' placeholder='Chuy'></div>" +
+      (back ? "<div class='row'><button class='btn wide' id='pBack'>🕯 Back to <b>" + esc(back.code) + "</b></button></div>" : "") +
       "<div class='row'><button class='btn primary wide' id='pHost'>Be the table</button>" +
       "<button class='btn' id='pJoin'>Sit down at one</button></div>";
     press($("pHost"), function () { P.name = Net.cleanName($("pName").value); save(); hostTable(); });
     press($("pJoin"), function () { P.name = Net.cleanName($("pName").value); save(); joinTable(); });
+    if (back) press($("pBack"), function () {
+      P.name = Net.cleanName($("pName").value); save();
+      Room.resume();
+      /* the table itself comes back under the same four letters; a chair
+         simply knocks on them again and is shown back to its own bones */
+      if (back.role === "host") hostTable(true); else { joinTable(); joinByCode(back.code); }
+    });
   }
   open("ovParty");
 }
 
-function hostTable() {
+function hostTable(again) {
   G.mode = "host"; G.mySeat = 0;
   G.names = { 0: P.name || "You" };
   for (var s = 1; s < 4; s++) G.names[s] = BOT_NAMES[s - 1];
+  showRoom(null);
+  var fallback = null;
   Net.startHosting(P.name || "Host").then(function (code) {
-    showInvite(code);
-  });
+    fallback = code;
+    return Net.roomOpen({ name: (P.name ? P.name + "’s table" : "A domino table") });
+  }).then(function (r) {
+    /* four letters if the mailbox is there; the QR handshake if it isn't,
+       which is what happens offline and on file:// */
+    if (r) showRoom(r.code, again); else showInvite(fallback);
+  }).catch(function () { showInvite(fallback); });
   Net.onRoster = function (roster) {
     for (var i = 0; i < roster.length; i++) {
       G.names[roster[i].seat] = roster[i].name || BOT_NAMES[roster[i].seat - 1] || ("Seat " + roster[i].seat);
@@ -933,13 +957,19 @@ function hostTable() {
     syncAll();
     renderLobby();
   };
+  /* Somebody sitting down and somebody coming back look the same from
+     here, and should: deal that chair its own view and carry on. The
+     seat was held for them by name (see net.js), so the bones are theirs. */
   Net.onLink = function (seat, nm) {
     toast(nm + " sat down.");
+    renderLobby();
+    syncNetChip();
     if (G.st) Net.dealViews(G.st, { turn: G.st.turn });
   };
   Net.onDrop = function (seat) {
-    if (seat > 0) toast(nameOf(seat) + " dropped — the house plays that chair.");
+    if (seat > 0) toast(nameOf(seat) + " dropped — the house plays that chair until they're back.");
     syncAll();
+    syncNetChip();
     scheduleTurn();
   };
   Net.onMessage = function (msg, from) {
@@ -950,6 +980,116 @@ function hostTable() {
     }
   };
   if (!G.match) newMatch();
+}
+
+/* ---------- four letters ----------
+   The table's own screen: the code, big, and who has sat down so far.
+   Everything else is one tap away and nobody needs it. */
+function showRoom(code, again) {
+  var body = $("partyBody");
+  body.innerHTML =
+    "<p class='lead' id='roomHow'>" + (again
+      ? "Same four letters as before — nothing to re-read. The chairs find their own way back."
+      : "Read these out. On their phone: <b>Play together</b> → <b>Sit down at one</b>.") + "</p>" +
+    "<div class='codeBig" + (code ? "" : " pending") + "' id='roomCode'>" + esc(code || "····") + "</div>" +
+    "<div class='codeWait' id='roomWait'>" + (code ? "waiting for them to type it…" : "opening the table…") + "</div>" +
+    "<div id='lobby'></div>" +
+    "<div class='row'><button class='btn' id='pShare'>Send the code</button>" +
+    "<button class='btn' id='pQR'>Codes &amp; QR instead</button></div>" +
+    "<p class='note'>Everyone who is not here yet is played by the house, so you can start now and let them sit down as they arrive.</p>";
+  renderLobby();
+  syncNetChip();
+  if (!code) return;
+  press($("pShare"), function () {
+    var url = Net.url(code);
+    if (navigator.share) navigator.share({ title: "Sit down at my domino table", text: "Four letters: " + code, url: url }).catch(function () {});
+    else if (navigator.clipboard) navigator.clipboard.writeText(url).then(function () { toast("Link copied."); }, function () {});
+  });
+  press($("pQR"), function () { Net.mintInvite().then(showInvite); });
+}
+
+/* the chair's own screen: type four letters, or tap a table you can see */
+var roomListT = 0, roomJoining = false;
+function joinByRoom() {
+  $("partyBody").innerHTML =
+    "<p class='lead'>Type the four letters the table read out.</p>" +
+    "<div class='fld'><label><b>Your name</b></label><input type='text' id='jName' maxlength='14' value='" + esc(P.name) + "'></div>" +
+    "<input class='codeIn' id='jRoom' maxlength='4' inputmode='latin' autocapitalize='characters' autocomplete='off' spellcheck='false' placeholder='····' aria-label='Their four-letter code'>" +
+    "<div class='codeWait' id='jWait'>four letters and you're in</div>" +
+    "<div class='roomList' id='jList'></div>" +
+    "<div class='row'><button class='btn' id='jQR'>Codes &amp; QR instead</button></div>";
+  press($("jQR"), function () { stopRoomList(); joinByPaste(null); });
+  $("jRoom").addEventListener("input", function () {
+    var v = Room.tidy(this.value);
+    this.value = v;
+    if (v.length === 4) joinByCode(v);
+  });
+  refreshRoomList();
+  startRoomList();
+  setTimeout(function () { try { $("jRoom").focus(); } catch (e) {} }, 250);
+}
+function jNote(t) { var el = $("jWait"); if (el) el.textContent = t; }
+function startRoomList() { stopRoomList(); roomListT = setInterval(refreshRoomList, 3500); }
+function stopRoomList() { if (roomListT) { clearInterval(roomListT); roomListT = 0; } }
+function refreshRoomList() {
+  Net.roomList().then(function (rooms) {
+    var box = $("jList");
+    if (!box) { stopRoomList(); return; }
+    if (rooms === null) { noMailbox(); return; }
+    if (!rooms.length) {
+      box.innerHTML = "<div class='roomEmpty'>No tables waiting yet — when somebody taps <b>Be the table</b>, theirs shows up here.</div>";
+      return;
+    }
+    box.innerHTML = rooms.map(function (r) {
+      return "<button class='roomRow' data-code='" + esc(r.code) + "'>" +
+        "<span class='rrCode'>" + esc(r.code) + "</span>" +
+        "<span class='rrTx'><b>" + esc(r.name || "A table") + "</b><i>" + esc(r.host || "somebody") +
+        " · " + (r.players || 1) + " of " + (r.seats || 4) + " seated</i></span>" +
+        "<span class='rrGo'>sit down ▸</span></button>";
+    }).join("");
+    Array.prototype.forEach.call(box.querySelectorAll(".roomRow"), function (b) {
+      press(b, function () { joinByCode(b.dataset.code); });
+    });
+  });
+}
+function noMailbox() {
+  stopRoomList();
+  toast("No four-letter codes here — the camera and paste way still works.");
+  joinByPaste(null);
+}
+function joinByCode(code, retry) {
+  code = Room.tidy(code);
+  if (!Room.looksLikeCode(code) || roomJoining) return;
+  if (Room.impossible(code)) { jNote("codes never use I or O — they'd read as 1 and 0. Check it again."); return; }
+  var nameBox = $("jName");
+  if (nameBox) { P.name = Net.cleanName(nameBox.value); save(); }
+  roomJoining = true;
+  stopRoomList();
+  if ($("jList")) $("jList").innerHTML = "";
+  jNote("knocking on " + code + "…");
+  Net.roomJoin(code, P.name).then(function (r) {
+    roomJoining = false;
+    if (!r) { noMailbox(); return; }
+    if (r.error) {
+      /* "full" is nearly always a spare pigeonhole still being minted —
+         one patient retry beats making somebody type it again */
+      if (/full/i.test(r.error) && !retry) { jNote("that table is pulling up a chair…"); setTimeout(function () { joinByCode(code, true); }, 1600); return; }
+      jNote(r.error);
+      startRoomList();
+      return;
+    }
+    jNote("found " + (r.name || code) + " — taking a seat…");
+  }, function () { roomJoining = false; jNote("that didn't take — try the code again"); startRoomList(); });
+}
+
+/* ---------- the link's pulse, at the table ---------- */
+function syncNetChip() {
+  var el = $("netChip");
+  if (!el) return;
+  if (G.mode !== "host" && G.mode !== "guest") { el.className = "hide"; return; }
+  var h = Net.health();
+  el.className = h.state;
+  $("netChipTx").textContent = h.words + (Net.code ? " · " + Net.code : "");
 }
 
 function showInvite(code) {
@@ -992,7 +1132,21 @@ function renderLobby() {
   el.innerHTML = html;
 }
 
+/* One door, two kinds of key. Four letters is the way in; a whole
+   pasted handshake still works and always will, because it is what is
+   left when there is no mailbox to mint four letters from. */
 function joinTable(prefill) {
+  guestHandlers();
+  if (prefill && !Room.isCode(prefill)) { joinByPaste(prefill); return; }
+  joinByRoom();
+  if (prefill) {
+    var box = $("jRoom");
+    if (box) box.value = Room.tidy(prefill);
+    joinByCode(prefill);
+  }
+}
+function joinByPaste(prefill) {
+  guestHandlers();
   $("partyBody").innerHTML =
     "<p class='lead'>Point your camera at the code on their phone, or paste it here.</p>" +
     "<div class='fld'><label><b>Your name</b></label><input type='text' id='jName' maxlength='14' value='" + esc(P.name) + "'></div>" +
@@ -1012,12 +1166,31 @@ function joinTable(prefill) {
   };
   $("jCode").addEventListener("input", go);
   if (prefill) go();
+}
 
+/* Everything a chair needs to know, wherever it came in from. Split out
+   of joinTable so the four-letter door and the paste door install exactly
+   the same handlers — a difference between them would be a bug nobody
+   would find until somebody's phone locked. */
+function guestHandlers() {
   G.mode = "guest";
   Net.onLink = function (seat) {
     G.mySeat = seat;
+    stopRoomList();
     shut("ovParty");
     banner("You're in", "Seat " + (seat + 1), 1400);
+    Room.remember({ role: "guest", code: Net.code, name: P.name, seat: seat });
+    syncNetChip();
+  };
+  /* the link came back by itself: no banner, no fuss — the host re-deals
+     this chair's view within the beat and the hand carries on */
+  Net.onRejoin = function () {
+    toast("Back at the table.");
+    syncNetChip();
+  };
+  Net.onHealth = function (state) {
+    syncNetChip();
+    if (state === "healing") toast("Lost the table for a moment — finding it again…");
   };
   Net.onRoster = function (roster) {
     for (var i = 0; i < roster.length; i++) {
@@ -1025,9 +1198,12 @@ function joinTable(prefill) {
     }
     syncAll();
   };
+  /* only reached when there is nothing to be done automatically: a
+     paste/QR chair has no four letters to knock on again */
   Net.onDrop = function () {
     banner("The table closed", "Reload to start again", 4000);
     G.mode = "solo";
+    syncNetChip();
   };
   Net.onMessage = function (msg) {
     if (msg.k === "view") {
@@ -1131,6 +1307,7 @@ window.__dt = function () {
      needs to keep a hand moving while it times the machines' beats —
      it is the player's turn a quarter of the time and the room is quite
      right to sit and wait, but a stalled window measures nothing. */
-  return { G: G, P: P, gfx: gfx, scene: scene, Net: Net, tryPlay: tryPlay, doPass: doPass };
+  return { G: G, P: P, gfx: gfx, scene: scene, Net: Net, tryPlay: tryPlay, doPass: doPass,
+           Room: Room, joinByCode: joinByCode, health: Net.health() };
 };
 })();

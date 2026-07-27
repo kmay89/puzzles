@@ -5,7 +5,7 @@
    engine.js; the boards live in gfx2d.js / gfx3d.js; the nearby link
    lives in net.js; the openings live in book.js. This file only
    conducts. */
-/* global Chess, Book, Eco, Teach, Learn, Skins, Gfx2D, Gfx3D, Net */
+/* global Chess, Book, Eco, Teach, Learn, Skins, Gfx2D, Gfx3D, Net, Room */
 (function () {
 "use strict";
 
@@ -30,7 +30,7 @@ function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return n
 function lsSet(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } }
 function lsDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
 
-var PREF_KEY = "chessroom_prefs", SAVE_KEY = "chessroom_save";
+var PREF_KEY = "chessroom_prefs", SAVE_KEY = "chessroom_save", LAN_KEY = "chessroom_lan";
 
 /* ===== preferences ===== */
 var prefs = { skin: null, use3d: true, sound: true, coach: true, helpers: true, clockSkin: "simple", name: "" };
@@ -752,6 +752,7 @@ function startGame(newMode, opts) {
   syncAll();
   hideAllOverlays();
   saveGame();
+  watchNetChip(mode === "lan" && Net.everLinked);
   if (mode === "coach" && G.turn !== humanSide) scheduleCoach();
   needFrame();
 }
@@ -857,7 +858,8 @@ function clockStrOf() { return clock.on ? (clock.base / 60000) + "+" + (clock.in
 
 /* ===== persistence ===== */
 function saveGame() {
-  if (!G || mode === "lan" || mode === "tour" || !mode) return;
+  if (mode === "lan") { saveLan(); return; }
+  if (!G || mode === "tour" || !mode) return;
   if (over) { lsDel(SAVE_KEY); return; }
   lsSet(SAVE_KEY, JSON.stringify({
     v: 1, mode: mode, sans: G.played.map(function (r) { return r.san; }),
@@ -873,6 +875,29 @@ function loadSave() {
     if (!s || s.v !== 1 || !s.sans || (s.mode !== "pass" && s.mode !== "coach")) return null;
     return s;
   } catch (e) { lsDel(SAVE_KEY); return null; }
+}
+/* A game played across two devices is kept separately, because it is a
+   different kind of thing: it needs the four letters and which chair I
+   was in, not just the moves. It is what "Rejoin your board" is made of,
+   and it is why a flat battery is an inconvenience rather than a loss. */
+function saveLan() {
+  if (mode !== "lan" || !G) return;
+  if (over) { lsDel(LAN_KEY); return; }
+  if (!Net.code) return;                  /* a paste/QR game has no address */
+  lsSet(LAN_KEY, JSON.stringify({
+    v: 1, code: Net.code, host: !!Net.isHost, side: lanSide,
+    sans: G.played.map(function (r) { return r.san; }),
+    clockStr: clockStrOf(), wMs: Math.round(clock.w), bMs: Math.round(clock.b),
+    my: lanMy, opp: lanOpp, title: Room.title || "", at: Date.now()
+  }));
+}
+function loadLan() {
+  try {
+    var s = JSON.parse(lsGet(LAN_KEY) || "null");
+    if (!s || s.v !== 1 || !s.code || !s.at) return null;
+    if (Date.now() - s.at > 8 * 60 * 60 * 1000) { lsDel(LAN_KEY); return null; }
+    return s;
+  } catch (e) { lsDel(LAN_KEY); return null; }
 }
 function resumeSave(s) {
   startGame(s.mode, { humanSide: s.humanSide, skill: s.skill, clockStr: s.clockStr });
@@ -912,12 +937,52 @@ function lanHandlers() {
       codeBusy("dealing the pieces…");
     }
   };
+  /* Only reached when there is nothing to be done automatically — a
+     paste/QR game has no address to come back to, so it asks. A game
+     with four letters heals instead, and says so on the chip. */
   Net.onDrop = function () {
     if (mode !== "lan" || over) return;
     clock.run = 0;
+    syncNetChip();
     toast("📡 The link was lost. Nothing is gone — either of you can host a fresh invite and the game resumes exactly here.",
       [{ label: "Host & resume", fn: function () { openLink(); hostFlow(true); } },
        { label: "Menu", fn: function () { showMenu(); }, ghost: true }], 30000);
+  };
+  /* the pulse on the board: what the link is actually doing */
+  Net.onHealth = function (state) {
+    syncNetChip();
+    if (mode !== "lan" || over) return;
+    if (state === "healing" || state === "lost") {
+      /* nobody's clock should run down inside a tunnel */
+      if (clock.on && clock.run) { clock.run = 0; syncAll(); }
+    } else if (state === "live" || state === "slow") {
+      if (clock.on && !clock.run && G && G.played.length >= 1) {
+        clock.run = G.turn; clock.lastT = performance.now(); syncAll();
+      }
+    }
+  };
+  /* the boards found each other again. Rather than reason about what was
+     missed while somebody was in a tunnel, the host simply re-states the
+     whole game — it is a few hundred bytes and it cannot drift. */
+  Net.onRelink = function () {
+    if (mode !== "lan") return;
+    if (Net.isHost) {
+      if (over) return;
+      Net.resync({ sans: G.played.map(function (r) { return r.san; }),
+                   clock: clockStrOf(), wMs: Math.round(clock.w), bMs: Math.round(clock.b),
+                   yourSide: -lanSide, name: lanMy || "Host" });
+    } else {
+      Net.send({ t: "hi2", name: lanMy || "Friend" });
+    }
+    toast("📡 Back together — the board is exactly as you left it.");
+  };
+  Net.onResync = function (msg) {
+    var wasLan = (mode === "lan");
+    lanOpp = String(msg.name || lanOpp || "Friend").slice(0, 18);
+    beginLan(msg.yourSide === 1 ? 1 : -1, msg.clock, msg.sans || [], msg.wMs, msg.bMs);
+    if (!wasLan) celebrateLink();
+    syncAll();
+    saveLan();
   };
   Net.onMessage = function (msg) {
     switch (msg.t) {
@@ -975,7 +1040,32 @@ function beginLan(mySide, clockStr, sans, wMs, bMs) {
   }
   orientation = lanSide;
   R.setOrientation(orientation);
+  /* the board is dealt — the room stops advertising itself but keeps its
+     four letters, because that is the address anybody coming back uses */
+  Net.roomStarted();
+  watchNetChip(true);
+  saveLan();
   syncAll();
+}
+/* ----- monitoring: the chip above the board -----
+   Two devices playing chess have exactly one thing that can silently go
+   wrong, and it is the link. So the link is the one thing with a light
+   on it: green while the round trip is comfortable, amber the moment it
+   isn't, and a live account of what is being done about it. Tapping it
+   stops waiting and tries this instant. */
+var netChipT = 0;
+function syncNetChip() {
+  var el = $("netChip");
+  if (!el) return;
+  if (mode !== "lan" || !Net.everLinked) { el.className = "hide"; return; }
+  var h = Net.health();
+  el.className = h.state;
+  $("netChipTx").textContent = h.words + (Net.code ? " · " + Net.code : "");
+}
+function watchNetChip(on) {
+  if (netChipT) { clearInterval(netChipT); netChipT = 0; }
+  if (on) netChipT = setInterval(syncNetChip, 2500);
+  syncNetChip();
 }
 function onNetMove(msg) {
   if (mode !== "lan" || !G || over) return;
@@ -1026,22 +1116,74 @@ function openLink() {
   hideAllOverlays();
   stopScan();
   linkStep = 0; linkRole = null;
-  myCodeRaw = ""; lastFed = ""; linkBusy = false;
+  myCodeRaw = ""; lastFed = ""; linkBusy = false; roomJoining = false;
   $("ovLink").classList.remove("hide");
-  $("linkChoose").classList.remove("hide");
-  $("linkStage").classList.add("hide");
+  roomPanel("choose");
   $("lanName").value = prefs.name || "";
   $("linkCodeIn").value = "";
   $("codeDrop").open = false;
+  offerRejoin();
+}
+/* A board you were in the middle of, offered back to you. This is the
+   whole point of remembering the code: a phone that died, a tab that was
+   closed, a browser that decided to reload — none of them should cost
+   anybody a game. */
+function offerRejoin() {
+  var btn = $("linkResume"), s = loadLan();
+  if (!btn) return;
+  if (!s) { btn.classList.add("hide"); return; }
+  var moves = s.sans ? s.sans.length : 0;
+  $("linkResumeSub").textContent = s.code + " · " + (s.opp ? "with " + s.opp + " · " : "") +
+    (moves ? moves + (moves === 1 ? " move in" : " moves in") : "not started yet");
+  btn.classList.remove("hide");
+}
+function rejoinLan() {
+  var s = loadLan();
+  if (!s) { toast("That board has faded — start a fresh one."); offerRejoin(); return; }
+  grabName();
+  Room.resume();                       /* the code, and the host's key */
+  lanOpp = s.opp || "";
+  if (s.host) {
+    /* Re-open under the same four letters. Nobody re-reads anything: the
+       code on the other person's screen is still the right code. */
+    linkRole = "host"; linkStep = 1;
+    lanCfg = { mySide: s.side, clockStr: s.clockStr, sans: s.sans || [], wMs: s.wMs, bMs: s.bMs };
+    beginLan(s.side, s.clockStr, s.sans || [], s.wMs, s.bMs);
+    $("ovLink").classList.remove("hide");
+    roomPanel("host");
+    $("roomCode").textContent = s.code;
+    $("roomCode").classList.remove("pending");
+    $("roomTitle").textContent = "Your board is open again";
+    $("roomHow").innerHTML = "Same four letters as before — nothing to re-read. Your opponent's board finds its own way back.";
+    roomWait("waiting for them…", true);
+    Net.name = lanMy || "Host";
+    Net.roomOpen({ host: lanMy || "Host", name: s.title || "A chess board" }).then(function (r) {
+      if (!r) { toast("Couldn't reopen that board — the mailbox is out of reach."); hostByHandshake(); return; }
+      $("roomCode").textContent = r.code;
+    });
+    return;
+  }
+  $("ovLink").classList.remove("hide");
+  roomPanel("join");
+  $("roomIn").value = s.code;
+  joinByCode(s.code);
 }
 function grabName() {
   lanMy = ($("lanName").value || "").trim().slice(0, 18);
   prefs.name = lanMy; savePrefs();
 }
+/* one card, four faces: choose · the host's four letters · the joiner's
+   keypad · the paste/QR handshake underneath them all */
+function roomPanel(which) {
+  $("linkChoose").classList.toggle("hide", which !== "choose");
+  $("linkRoom").classList.toggle("hide", which !== "host");
+  $("linkJoinRoom").classList.toggle("hide", which !== "join");
+  $("linkStage").classList.toggle("hide", which !== "stage");
+  if (which !== "join") stopRoomList();
+}
 /* paint the shared stage for the current step */
 function linkStage(opts) {
-  $("linkChoose").classList.add("hide");
-  $("linkStage").classList.remove("hide");
+  roomPanel("stage");
   $("linkTitle").textContent = opts.title;
   $("linkHow").innerHTML = opts.how;
   $("linkNote").textContent = opts.note || "The camera stays on this device and stops the moment it sees a code.";
@@ -1081,7 +1223,11 @@ function codeBusy(msg) {
   $("qrWait").innerHTML = '<span class="spin"></span>' + msg;
 }
 
-/* --- host --- */
+/* --- host ---
+   Four letters first, because reading four letters across a table beats
+   every other way in. The QR/paste handshake is still there, one tap
+   below, and it is what happens by itself when there is no mailbox to
+   mint a code (offline, file://, a fork of this without the function). */
 function hostFlow(resume) {
   grabName();
   var doHost = function (clockStr, side) {
@@ -1093,25 +1239,49 @@ function hostFlow(resume) {
                wMs: resume && clock.on ? Math.round(clock.w) : undefined,
                bMs: resume && clock.on ? Math.round(clock.b) : undefined };
     $("ovLink").classList.remove("hide");
-    linkStage({ step: 1, showCode: true, title: "Show this to your friend",
-      how: scanSupported()
-        ? "On their device: <b>Play together</b> → <b>Join their board</b>, then point their camera at this code."
-        : "Tap <b>Share</b> to send them the link — tapping it opens their board already joining. Then they'll send you a short answer code to paste." });
-    codeBusy("making your code…");
-    Net.host({ name: lanMy, n: lanNonce }).then(function (code) {
-      showMyCode(code, true);           /* invite: a tappable link */
-      /* the host watches for the reply straight away, so the two phones
-         can simply face each other; where there's no camera, the
-         clipboard watcher is what catches their pasted answer */
-      if (scanSupported()) startScan();
-      else $("codeDrop").open = true;
-      startClipWatch();
-    }).catch(function () {
-      codeBusy("that didn't work — close and try again");
-    });
+    roomPanel("host");
+    $("roomCode").textContent = "····";
+    $("roomCode").classList.add("pending");
+    $("roomTitle").textContent = "Your board is open";
+    roomWait("opening the board…", true);
+    Net.name = lanMy || "Host";
+    Net.roomOpen({ host: lanMy || "Host", name: (lanMy ? lanMy + "'s board" : "A chess board") })
+      .then(function (r) {
+        if (!r) { hostByHandshake(); return; }
+        $("roomCode").textContent = r.code;
+        $("roomCode").classList.remove("pending");
+        roomWait("waiting for them to type it…", true);
+        $("roomHow").innerHTML = "Read these four letters to your friend. On their device: <b>Play together</b> → <b>Join a board</b>.";
+      })
+      .catch(function () { hostByHandshake(); });
   };
   if (resume) { doHost(clockStrOf(), lanSide === 1 ? "w" : "b"); return; }
   openNewCard("lanhost", function (opts) { doHost(opts.clockStr, opts.side); });
+}
+/* the way in that needs no server at all */
+function hostByHandshake() {
+  linkRole = "host"; linkStep = 1;
+  linkStage({ step: 1, showCode: true, title: "Show this to your friend",
+    how: scanSupported()
+      ? "On their device: <b>Play together</b> → <b>Join a board</b> → <b>Codes &amp; QR</b>, then point their camera at this code."
+      : "Tap <b>Share</b> to send them the link — tapping it opens their board already joining. Then they'll send you a short answer code to paste." });
+  codeBusy("making your code…");
+  Net.host({ name: lanMy, n: lanNonce }).then(function (code) {
+    showMyCode(code, true);           /* invite: a tappable link */
+    /* the host watches for the reply straight away, so the two phones
+       can simply face each other; where there's no camera, the
+       clipboard watcher is what catches their pasted answer */
+    if (scanSupported()) startScan();
+    else $("codeDrop").open = true;
+    startClipWatch();
+  }).catch(function () {
+    codeBusy("that didn't work — close and try again");
+  });
+}
+function roomWait(text, spinning) {
+  $("roomWaitTx").textContent = text;
+  var s = $("roomWait").querySelector(".spin");
+  if (s) s.classList.toggle("hide", !spinning);
 }
 
 /* --- joiner --- */
@@ -1119,11 +1289,32 @@ function joinFlow(prefill) {
   grabName();
   linkRole = "join"; linkStep = 1; myCodeRaw = ""; lastFed = "";
   $("ovLink").classList.remove("hide");
+  Net.name = lanMy || "Friend";
   if (prefill) {
+    /* a four-letter code (a tapped link, a typed hash) needs no handshake
+       screen at all — it goes straight in */
+    if (Room.isCode(prefill)) {
+      roomPanel("join");
+      $("roomIn").value = Room.tidy(prefill);
+      joinByCode(prefill);
+      return;
+    }
     linkStage({ step: 1, showCode: false, title: "Joining…", how: "Reading their invite." });
     feedCode(prefill);
     return;
   }
+  roomPanel("join");
+  $("roomIn").value = "";
+  joinNote("four letters and you're in");
+  refreshRoomList();
+  startRoomList();
+  setTimeout(function () { try { $("roomIn").focus(); } catch (e) {} }, 250);
+}
+/* the paste/QR way in, for when there is no mailbox — or when somebody
+   would simply rather scan */
+function joinByHandshake() {
+  roomPanel("stage");
+  linkRole = "join"; linkStep = 1;
   if (scanSupported()) {
     linkStage({ step: 1, showCode: false,
       title: "Point at their code",
@@ -1136,6 +1327,78 @@ function joinFlow(prefill) {
       "This browser can't use the camera inside a page. Ask them to tap <b>Share</b> on their board and send you the link — then paste it below (or just tap the link they send).");
   }
   startClipWatch();
+}
+
+/* ----- the four-letter door ----- */
+var roomListT = 0, roomJoining = false;
+function joinNote(t) { $("joinWaitTx").textContent = t; }
+function startRoomList() {
+  stopRoomList();
+  roomListT = setInterval(refreshRoomList, 3500);
+}
+function stopRoomList() { if (roomListT) { clearInterval(roomListT); roomListT = 0; } }
+/* Boards waiting nearby, so nobody has to read anything out at all if
+   they'd rather just tap. A mailbox that isn't there sends the whole
+   screen back to the handshake rather than showing an empty list. */
+function refreshRoomList() {
+  Net.roomList().then(function (rooms) {
+    if (rooms === null) { noMailbox(); return; }
+    var box = $("roomList");
+    if (!box) return;
+    if (!rooms.length) {
+      box.innerHTML = '<div class="roomEmpty">No boards waiting yet — when your friend taps <b>Start a board</b>, theirs appears here.</div>';
+      return;
+    }
+    box.innerHTML = rooms.map(function (r) {
+      return '<button class="roomRow" data-code="' + esc(r.code) + '">' +
+        '<span class="rrCode">' + esc(r.code) + '</span>' +
+        '<span class="rrTx"><b>' + esc(r.name || "A board") + '</b><i>' + esc(r.host || "someone") +
+        " · " + (r.age < 60 ? "just now" : (Math.round(r.age / 60) + "m ago")) + '</i></span>' +
+        '<span class="rrGo">join ▸</span></button>';
+    }).join("");
+    Array.prototype.forEach.call(box.querySelectorAll(".roomRow"), function (b) {
+      b.addEventListener("click", function () { joinByCode(b.dataset.code); });
+    });
+  });
+}
+function noMailbox() {
+  stopRoomList();
+  toast("No four-letter codes here — falling back to scanning and pasting, which always works.");
+  joinByHandshake();
+}
+function joinByCode(code, retry) {
+  code = Room.tidy(code);
+  if (!Room.looksLikeCode(code)) return;
+  if (roomJoining) return;
+  if (Room.impossible(code)) {
+    joinNote("codes never use I or O — they'd read as 1 and 0. Check it with your host.");
+    return;
+  }
+  roomJoining = true;
+  stopRoomList();
+  $("roomList").innerHTML = "";
+  joinNote("knocking on " + code + "…");
+  Net.roomJoin(code, lanMy).then(function (r) {
+    roomJoining = false;
+    if (!r) { noMailbox(); return; }
+    if (r.error) {
+      /* "full" is almost always a spare pigeonhole still being minted —
+         one patient retry is kinder than making them type it again */
+      if (/full/i.test(r.error) && !retry) {
+        joinNote("that board is making room for you…");
+        setTimeout(function () { joinByCode(code, true); }, 1600);
+        return;
+      }
+      joinNote(r.error);
+      startRoomList();
+      return;
+    }
+    joinNote("found " + (r.name || code) + " — setting up the board…");
+  }, function () {
+    roomJoining = false;
+    joinNote("that didn't take — try the code again");
+    startRoomList();
+  });
 }
 
 /* the paste-led version of a step, used whenever scanning isn't possible */
@@ -2378,10 +2641,40 @@ function wireUI() {
   /* link overlay */
   $("linkHostBtn").addEventListener("click", function () { hostFlow(false); });
   $("linkJoinBtn").addEventListener("click", function () { joinFlow(null); });
+  $("linkResume").addEventListener("click", rejoinLan);
   $("linkBack").addEventListener("click", function () {
     stopScan();
+    stopRoomList();
+    /* backing out of a board that never got going should take its four
+       letters down with it; a game under way is left exactly alone */
+    if (mode !== "lan") Net.roomLeave();
     Net.close();
     showMenu();
+  });
+  /* --- the four-letter door --- */
+  $("roomShare").addEventListener("click", function () {
+    var code = $("roomCode").textContent.trim();
+    if (!Room.looksLikeCode(code)) { toast("The code isn't ready yet — one moment."); return; }
+    share(Net.url(code));
+  });
+  $("roomOther").addEventListener("click", hostByHandshake);
+  $("joinOther").addEventListener("click", joinByHandshake);
+  $("roomIn").addEventListener("input", function () {
+    var v = Room.tidy(this.value);
+    this.value = v;
+    /* four letters in and you're off — there is no "go" button to find */
+    if (v.length === 4) joinByCode(v);
+  });
+  $("roomIn").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") joinByCode(this.value);
+  });
+  /* the chip is a button: stop waiting, try them now */
+  $("netChip").addEventListener("click", function () {
+    if (Net.vitals) Net.vitals.tick(true);
+    syncNetChip();
+    toast(Net.healing()
+      ? "Reaching for them again now — the four letters haven't changed."
+      : "The link is " + Net.health().words + ".");
   });
   $("linkShare").addEventListener("click", function () { share($("linkCodeOut").value); });
   $("linkPaste").addEventListener("click", pasteCode);
@@ -2426,10 +2719,13 @@ function offerSharedSkin(delay) {
   }, delay || 0);
   return true;
 }
+/* Both kinds of invite arrive the same way: four letters (#join=BUZZ) or
+   a whole handshake (#join=CHESS2.…). joinFlow() tells them apart. */
+var JOIN_HASH = /#join=(CHESS(?:1|2)\.[A-Za-z0-9_-]+|[A-Za-z]{4})(?:$|&)/;
 function wireHashLinks() {
   window.addEventListener("hashchange", function () {
     if (offerSharedSkin(0)) return;
-    var j = location.hash.match(/#join=(CHESS(1|2)\.[A-Za-z0-9_-]+)/);
+    var j = location.hash.match(JOIN_HASH);
     if (j) {
       history.replaceState(null, "", location.pathname);
       openLink();
@@ -2473,6 +2769,8 @@ function showUpdateBar(worker) {
 
 /* ===== go ===== */
 function boot() {
+  /* who this room is, as far as the shared front door is concerned */
+  Room.configure({ game: "chess", seats: 2, label: "board" });
   wireUI();
   lanHandlers();
   initRenderers();
@@ -2491,7 +2789,7 @@ function boot() {
   offerSharedSkin(1200);
 
   /* arriving by invite link? straight into the join flow */
-  var joinM = location.hash.match(/#join=(CHESS(1|2)\.[A-Za-z0-9_-]+)/);
+  var joinM = location.hash.match(JOIN_HASH);
   setTimeout(function () {
     $("splash").classList.add("gone");
     if (joinM) {
@@ -2519,5 +2817,8 @@ window.__cr = { get game() { return G; }, Chess: Chess, Book: Book, Net: Net,
   clockMs: function (side) { return side === 1 ? clock.w : clock.b; },
   oddsResetForTest: function () { oddsLastNudge = -99; teachSeen = {}; teachCool = 0; },
   get mode() { return mode; }, startGame: startGame, get renderer() { return R; },
-  feedCode: feedCode, openLink: openLink };   /* the join flow's one door, for tests */
+  feedCode: feedCode, openLink: openLink,   /* the join flow's one door, for tests */
+  Room: Room, joinByCode: joinByCode, hostFlow: hostFlow, joinFlow: joinFlow,
+  get health() { return Net.health(); }, get lanSave() { return loadLan(); },
+  rejoinLan: rejoinLan, syncNetChip: syncNetChip };
 })();
