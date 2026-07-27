@@ -185,6 +185,21 @@ Gfx2D.prototype.bone = function (x, y, w, h, rot, a, b, opts) {
     g.shadowBlur = opts.lift * 14;
     g.shadowOffsetY = opts.lift * 7;
   }
+
+  /* The front edge. A bone in the hand used to be a rounded rectangle
+     with a bevel painted on, which is fine on its own but stopped being
+     fine once the table started drawing bones as solids: the hand read
+     as a row of cards below a tray of objects. One darker rounded rect
+     offset down by the bone's thickness, drawn under the face, and the
+     sliver left showing along the bottom is an edge. It costs one fill
+     and it is the same trick the eye is being offered in 3D. */
+  var thick = Math.max(1.5, Math.min(w, h) * 0.075);
+  var edgeCol = opts.faceDown ? sk.bones.back : sk.bones.face;
+  rr(g, -hw, -hh + thick, w, h, r);
+  g.fillStyle = mix(edgeCol, "#000000", 0.42);
+  g.fill();
+  g.shadowColor = "transparent";
+
   /* the body */
   if (opts.faceDown) {
     rr(g, -hw, -hh, w, h, r);
@@ -256,13 +271,30 @@ Gfx2D.prototype.pips = function (cx, cy, w, h, n) {
   for (var i = 0; i < set.length; i++) {
     var px = cx + (set[i][0] - 1) * span / 2;
     var py = cy + (set[i][1] - 1) * span / 2;
+    /* the shadow the hole steals from the face around its rim */
+    var halo = g.createRadialGradient(px, py, rad, px, py, rad * 1.55);
+    halo.addColorStop(0, alpha(sk.bones.pip, 0.20));
+    halo.addColorStop(1, alpha(sk.bones.pip, 0));
+    g.fillStyle = halo;
+    g.beginPath(); g.arc(px, py, rad * 1.55, 0, Math.PI * 2); g.fill();
+
     g.beginPath(); g.arc(px, py, rad, 0, Math.PI * 2);
     g.fillStyle = sk.bones.pip; g.fill();
-    /* a pip is drilled, not printed — a highlight on the far side */
-    g.beginPath();
-    g.arc(px - rad * 0.28, py - rad * 0.28, rad * 0.42, 0, Math.PI * 2);
-    g.fillStyle = alpha("#ffffff", 0.16 + sk.bones.shine * 0.18);
-    g.fill();
+
+    /* A pip is drilled, and a pit is lit on the wall *opposite* the
+       light — the near wall is the one in its own shadow. The highlight
+       used to sit up and to the left, on the same side as the bevel's
+       lit edge, which is how you shade a dome. Every pip in the hand was
+       reading as a bump while the table drew holes. */
+    g.save();
+    g.beginPath(); g.arc(px, py, rad, 0, Math.PI * 2); g.clip();
+    var bore = g.createLinearGradient(px - rad, py - rad, px + rad, py + rad);
+    bore.addColorStop(0, alpha("#000000", 0.45));
+    bore.addColorStop(0.55, alpha("#000000", 0));
+    bore.addColorStop(1, alpha("#fff6e4", 0.30 + sk.bones.shine * 0.20));
+    g.fillStyle = bore;
+    g.fillRect(px - rad, py - rad, rad * 2, rad * 2);
+    g.restore();
   }
 };
 

@@ -110,6 +110,7 @@ var VARIED = "(() => { const c = document.getElementById('table');" +
   var renderer = await page.evaluate("window.__dt().gfx.kind");
   ok("it came up in 3D", renderer === "3d", "got " + renderer);
 
+
   var st = await page.evaluate("(()=>{const g=window.__dt().G;return {seat:g.mySeat,hand:g.view.hand.length,turn:g.view.turn,line:g.view.line.length};})()");
   ok("you have seven bones", st.hand === 7, "got " + st.hand);
   ok("and a seat at the table", st.seat === 0);
@@ -154,6 +155,87 @@ var VARIED = "(() => { const c = document.getElementById('table');" +
   var played = await page.evaluate("window.__dt().G.view.line.length");
   ok("the hand plays on by itself", played >= 2, played + " bones down");
   ok("and nothing has thrown", errors.length === 0, errors.slice(0, 3).join(" | "));
+
+  /* ---------- the bones have sides ----------
+     "There is more than one colour on the canvas" is the check that let
+     a table of flat white cards ship twice. A bone drawn without its
+     sides still passes it, still passes every count of triangles, and
+     still looks like a domino seen from directly overhead — the fault
+     only exists at the angle a player actually sees.
+
+     The obvious next test is a histogram: collect the bone-coloured
+     pixels and look for a spread of brightness. It does not work, and
+     it is worth saying why, because it looks like it should. Flattening
+     the shader so every face takes the top face's light — a literal
+     flat card — leaves that check green. The pips are drilled, so their
+     bores and their antialiased rims supply a full ramp of tone inside
+     the face on their own. The spread was never coming from the sides.
+
+     So project instead of sampling blind. For each bone take the centre
+     of its top face and the midpoint of whichever of its four walls
+     most faces the camera, push both through the same proj·view the
+     frame was drawn with, and read those two pixels. That compares the
+     two surfaces that must differ, and nothing else. */
+  /* let anything mid-slam land first — a bone in the air is not where
+     the resting layout says it is */
+  await page.waitForFunction("!window.__dt().scene().anim", null, { timeout: 4000 }).catch(function () {});
+  var sides = await page.evaluate(
+    "(() => {" +
+    "const d = window.__dt(), g = d.gfx, s = d.scene(), cam = g.lastCam, L = window.Layout;" +
+    "if (!cam) return {err:'no camera'};" +
+    "const hx = L.LEN/2, hy = L.WID/2, hz = 0.17;" +
+    "const cv = document.getElementById('table'), gl = cv.getContext('webgl');" +
+    "const px = new Uint8Array(cv.width*cv.height*4);" +
+    "gl.readPixels(0,0,cv.width,cv.height,gl.RGBA,gl.UNSIGNED_BYTE,px);" +
+    "const mv = (m,v) => [0,1,2,3].map(r => m[r]*v[0]+m[4+r]*v[1]+m[8+r]*v[2]+m[12+r]*v[3]);" +
+    "function lum(p){" +
+    "  const c = mv(cam.proj, mv(cam.view, [p[0],p[1],p[2],1]));" +
+    "  if (c[3] <= 0) return null;" +
+    /* readPixels counts rows from the bottom, which is also which way
+       NDC y runs, so no flip is needed here */
+    "  const X = Math.round((c[0]/c[3]*0.5+0.5)*cv.width), Y = Math.round((c[1]/c[3]*0.5+0.5)*cv.height);" +
+    "  if (X<2||Y<2||X>=cv.width-2||Y>=cv.height-2) return null;" +
+    "  let a=0; for(let j=-1;j<=1;j++) for(let i=-1;i<=1;i++){" +
+    "    const k=((Y+j)*cv.width+(X+i))*4; a+=0.299*px[k]+0.587*px[k+1]+0.114*px[k+2]; }" +
+    "  return a/9; }" +
+    "const out=[];" +
+    "for (const b of s.table.bones){" +
+    "  const r=b.rot*Math.PI/180, C=Math.cos(r), S=Math.sin(r);" +
+    "  const to=(lx,ly,lz)=>[b.x+lx*C-ly*S, b.y+lx*S+ly*C, lz];" +
+    "  const top=lum(to(0,0,hz));" +
+    "  let best=null,bd=-2;" +
+    "  for (const w of [[0,-hy,0,-1],[0,hy,0,1],[-hx,0,-1,0],[hx,0,1,0]]){" +
+    "    const n=[w[2]*C-w[3]*S, w[2]*S+w[3]*C, 0], p=to(w[0],w[1],-0.03);" +
+    "    const dv=[cam.eye[0]-p[0],cam.eye[1]-p[1],cam.eye[2]-p[2]];" +
+    "    const dd=(n[0]*dv[0]+n[1]*dv[1]+n[2]*dv[2])/Math.hypot(dv[0],dv[1],dv[2]);" +
+    "    if(dd>bd){bd=dd;best=p;} }" +
+    "  const side=lum(best);" +
+    "  if(top&&side) out.push(+(side/top).toFixed(3)); }" +
+    "return {ratios:out}; })()");
+  ok("the bones can be measured", !!(sides.ratios && sides.ratios.length),
+     sides.err || (sides.ratios || []).length + " bones");
+  if (sides.ratios && sides.ratios.length) {
+    /* The *best* wall on the table, not the average of them and not one
+       chosen bone. Two things push a reading up towards 1.0 without
+       anything being wrong: a bone in the middle of a folded line can
+       have all four walls hidden behind neighbours, and a bone caught
+       mid-slam is not where the resting layout says it is, so both
+       samples land on felt. Both are noise in one direction only. A
+       flat card cannot produce a *low* reading, so taking the minimum
+       is immune to all of it — the check asks whether anywhere on this
+       table a bone shows a wall clearly darker than its own face, which
+       is exactly the thing that was missing.
+
+       The real table reads 0.71-0.83 where a wall is visible. A shader
+       flattened so every surface takes the top face's light could not
+       get a single bone under 1.28, because the bevel then catches
+       *more* light than the face does. Nowhere near each other. */
+    var best = Math.min.apply(null, sides.ratios);
+    ok("a bone is a solid, not a flat card — the wall facing you is darker than the face",
+       best < 0.85,
+       "best wall reads " + (best * 100).toFixed(0) + "% of its own face, across " +
+       sides.ratios.length + " bones");
+  }
 
   /* ---------- the table has a pulse ----------
      Three machines deciding as fast as they can is unreadable: bones
