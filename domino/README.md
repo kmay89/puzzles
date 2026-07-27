@@ -36,6 +36,18 @@ is says it is thinking, the bone lands, and there is a moment to look at
 it before the next player starts. *Relaxed* is the default; *Brisk* is a
 table in a hurry, *Quick* is for when you just want the hand over.
 
+**The table is lit like a table**, which took three lights rather than
+one. A single bulb overhead makes every top face the same white and
+every side the same dead grey, and a bone with a grey side stops looking
+like the same ivory as its top — so it reads as a card lying on a
+photograph. There is a warm key from over the far shoulder, a cool fill
+from behind you, and the felt's own brown bouncing back up: a side then
+darkens *towards the colour of the cloth* instead of towards grey, which
+is what it does on a real table. The bulb hangs off to one side so the
+shadows fall towards you where you can see them, the pips are drilled
+holes shaded across their bores rather than printed dots, and the bevel
+is mitred at the corners so the silhouette closes.
+
 No spinner and no branching. The line has two ends and only ever two
 ends; doubles lie crosswise because that is how they lie, not because
 they open a third road. Branching belongs to the five-up family — a
@@ -146,6 +158,29 @@ containing the word *passed* must be backed by a pass in the record.
   grey wedges hanging off both ends at once. Both ends is the tell —
   impossible for a solid box under any light, so the fault had to be
   winding rather than shading.
+- **And for being closed.** The same file adds up (b−a)×(c−a) over every
+  triangle: a surface with no holes sums to exactly zero, and a hole
+  leaves twice its own vector area behind. The chamfers used to stop
+  short of the bone's corners, so adjacent cuts met at a point with an
+  open triangle between them — invisible at a hairline bevel, four
+  notches with the felt showing through once the bevel was wide enough
+  to see. Pairing up edges would be the obvious test and it is the wrong
+  one here: the top face is deliberately two quads so each half can
+  carry its own pips, and the resulting T-junctions are legitimate.
+  Vector area does not care how a face is subdivided.
+- **And for looking like one.** All of the above can pass while the
+  table still renders as flat white cards, which is what it did: the
+  browser check's "is there more than one colour on the canvas" is
+  satisfied by a sticker. The honest test projects two points per bone
+  through the very matrices the frame was drawn with — the centre of the
+  top face, and the midpoint of whichever wall most faces the camera —
+  and compares those two pixels. A real bone's near wall reads about
+  three-quarters of its own face. A shader flattened so every surface
+  takes the top face's light cannot get below 1.2, because then the
+  bevel catches *more* light than the face does. Only the bone nearest
+  the camera is measured, because that is the one nothing can be
+  standing in front of; measuring all of them made the check pass or
+  fail with the shuffle.
 - **The room is opened and played by a real browser.** `room-check.js`
   drives headless Chromium through the first two minutes — start a
   match, tap a bone, take a hint, change the colours, switch renderers,

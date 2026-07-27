@@ -34,8 +34,47 @@ function dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
 
 ok("the bone is built", P.length > 0 && I.length > 0);
 ok("a normal for every corner", N.length === P.length);
-/* two faces, four chamfers, four sides, a back */
+/* two faces, four chamfers mitred at their corners, four sides, a back */
 ok("eleven quads make a bone", P.length / 3 === 11 * 4, (P.length / 3 / 4) + " quads");
+
+/* ---------- and it is closed ----------
+   The bone is a solid, and a solid has no holes. The test is the vector
+   area: add up (b-a)×(c-a) over every triangle and a closed surface
+   sums to exactly zero, because every outward-facing patch is cancelled
+   by the rest of the shape facing the other way. Leave a hole and the
+   sum is what is missing — twice the vector area of the gap.
+
+   This is not hypothetical. The chamfers used to stop short of the
+   bone's corners by the chamfer width, so adjacent cuts touched at a
+   single point with an open triangle between them, and the side walls
+   below them left an open sliver besides — eight holes in all. At the
+   original 0.055 bevel each was a pixel or two and went unnoticed for
+   the life of the room; widening the bevel so the edges would read
+   turned all four corners into notches with the felt showing through.
+   Mitring the chamfers out to the true corners closes every one.
+
+   Pairing up edges instead would be the more obvious test and it is the
+   wrong one here: the top face is two quads so that each half can carry
+   its own pips, and their shared boundary meets the chamfer's single
+   long edge as two half-edges. Those T-junctions are legitimate — the
+   surface is covered — but they fail edge-pairing, and a check that
+   cries wolf on correct geometry gets deleted. Vector area does not
+   care how a face is subdivided.
+
+   What it cannot catch is a set of holes whose areas happen to cancel
+   exactly. The four corners do not: all of them face upwards, so their
+   z components add rather than cancel. */
+(function () {
+  var s = [0, 0, 0];
+  for (var t = 0; t < I.length; t += 3) {
+    var a = v(I[t]), b = v(I[t + 1]), c = v(I[t + 2]);
+    var f = cross(sub(b, a), sub(c, a));
+    s[0] += f[0]; s[1] += f[1]; s[2] += f[2];
+  }
+  var mag = Math.hypot(s[0], s[1], s[2]);
+  ok("the surface closes — no gaps at the corners", mag < 1e-9,
+     "vector area off by " + mag.toExponential(2));
+})();
 
 /* ---------- the winding rule, triangle by triangle ---------- */
 (function () {

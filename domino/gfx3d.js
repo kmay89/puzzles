@@ -94,37 +94,93 @@ var VS = [
   "}"
 ].join("\n");
 
+/* Three lights, because one is what made the bones look like cut-out
+   paper. A single bulb straight overhead lights every top face to the
+   same white and leaves every side the same dead grey, so a bone reads
+   as a flat card with a smudge under it — which is exactly what it did.
+
+   What sells a small solid object is not more light, it is light of
+   *different colours* arriving from different directions:
+
+     key     the bulb over the table. Half-Lambert, so the terminator is
+             a soft shoulder rather than a hard line, and warm, because
+             it is a bulb in a cantina.
+     fill    a cool wash from behind the viewer's shoulder. This is the
+             one that matters: the side of the bone facing you is turned
+             away from the bulb, and with no fill it goes neutral grey
+             and stops looking like the same ivory as the top. Lit
+             coolly it reads as ivory *in shadow*, which is the whole
+             difference.
+     bounce  the felt's own colour, coming back up off the cloth onto
+             everything that can see it — which is the sides, mostly.
+
+   The weights are chosen so a face pointing straight up lands just
+   under 1 and nothing clips: key 0.72 + fill 0.20·0.60 + ambient 0.14,
+   with bounce contributing nothing at all up there. Change one and
+   check that sum again, or the cream blows out to flat white and every
+   gain here is thrown away. */
 var FS = [
   "precision mediump float;",
   "varying vec3 vN; varying vec3 vP; varying vec2 vUV;",
-  "uniform vec3 uColor, uEye, uLamp;",
+  "uniform vec3 uColor, uEye, uLamp, uBounce;",
   "uniform float uSpec, uPower, uRim, uAlpha, uTex, uAmb;",
   "uniform sampler2D uSampler;",
+  "const vec3 FILL = vec3(-0.470, -0.646, 0.601);",   /* over the near shoulder */
   "void main(){",
   "  vec3 N = normalize(vN);",
   "  vec3 Ld = normalize(uLamp - vP);",
   "  vec3 V = normalize(uEye - vP);",
   "  vec3 H = normalize(Ld + V);",
-  /* Half-Lambert rather than straight Lambert. One bulb over a table
-     with a straight dot product gives a face at full brightness and a
-     bevel edge at nothing — the bones came out as blown-out white
-     slabs with black sides, which is what a single hard light does and
-     not at all what a lit table looks like. Wrapping the falloff round
-     the shoulder keeps the face bright while leaving the sides lit by
-     the bounce off the felt, the way they are in a real room.
+  "  float nd  = dot(N, Ld);",
+  "  float key = pow(max(nd * 0.5 + 0.5, 0.0), 1.7);",
+  "  float fall = 1.0 - clamp(length(uLamp.xy - vP.xy) / 15.0, 0.0, 1.0);",
+  "  key *= 0.55 + 0.45 * fall;",
+  "  float fil = max(dot(N, FILL), 0.0);",
+  /* How much of the felt a surface can see: none from a face pointing
+     straight up, half from a wall standing on it. This is the term that
+     keeps a bone's sides *ivory*.
 
-     Keeping the whole thing inside [uAmb, 1] is what stops the face
-     clipping to white: the cream of the bone stays cream. */
-  "  float nd = dot(N, Ld);",
-  "  float dif = pow(max(nd * 0.5 + 0.5, 0.0), 1.6);",
-  "  float fall = 1.0 - clamp(length(uLamp.xy - vP.xy) / 26.0, 0.0, 1.0);",
-  "  float lit = uAmb + (1.0 - uAmb) * dif * (0.66 + 0.34 * fall);",
+     Tinting it with the felt is not decoration. A cream face under
+     neutral light darkens to a neutral grey — correctly, that is what
+     the arithmetic says — and a grey side next to a cream top stops
+     reading as one object. What actually happens on a table is that the
+     side is lit almost entirely by brown light coming back up off the
+     cloth, so it darkens *towards the felt's hue* rather than towards
+     grey. Take uBounce out and the sides go straight back to cardboard. */
+  "  float bnc = (1.0 - N.z) * 0.5;",
+  "  vec3 light = vec3(1.00, 0.95, 0.86) * (0.72 * key)",
+  "             + vec3(0.80, 0.87, 1.00) * (0.20 * fil)",
+  "             + uBounce * (0.42 * bnc)",
+  "             + vec3(1.00, 0.97, 0.92) * uAmb;",
   "  vec3 base = uColor;",
   "  if (uTex > 0.5) { vec4 t = texture2D(uSampler, vUV); base = mix(uColor, t.rgb, t.a); }",
-  "  float spe = pow(max(dot(N, H), 0.0), uPower) * uSpec * (0.4 + 0.6 * fall);",
+  "  float spe = pow(max(dot(N, H), 0.0), uPower) * uSpec * (0.35 + 0.65 * fall);",
   "  float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0) * uRim;",
-  "  vec3 col = base * lit + vec3(1.0, 0.96, 0.88) * spe + vec3(0.7, 0.8, 1.0) * rim;",
+  "  vec3 col = base * light + vec3(1.0, 0.96, 0.88) * spe + vec3(0.7, 0.8, 1.0) * rim;",
   "  gl_FragColor = vec4(col, uAlpha);",
+  "}"
+].join("\n");
+
+/* A flat, textured, unlit quad — the contact shadow under a bone and
+   the slot marking an open end. Kept apart from the lit shader so a
+   shadow cannot pick up a specular highlight, which is exactly the sort
+   of thing that gives a fake shadow away. */
+var FLAT_VS = [
+  "attribute vec3 aPos; attribute vec2 aUV;",
+  "uniform mat4 uProj, uView, uModel;",
+  "varying vec2 vUV;",
+  "void main(){ vUV = aUV; gl_Position = uProj * uView * uModel * vec4(aPos,1.0); }"
+].join("\n");
+
+var FLAT_FS = [
+  "precision mediump float;",
+  "varying vec2 vUV;",
+  "uniform sampler2D uSampler;",
+  "uniform vec3 uColor;",
+  "uniform float uAlpha;",
+  "void main(){",
+  "  float a = texture2D(uSampler, vUV).a;",
+  "  gl_FragColor = vec4(uColor, a * uAlpha);",
   "}"
 ].join("\n");
 
@@ -158,7 +214,17 @@ function compile(gl, type, src) {
    ends of every bone at once. Both ends: impossible for a solid box, and
    the tell that this was winding and not lighting. */
 function boneGeometry() {
-  var hx = L.LEN / 2, hy = L.WID / 2, hz = 0.16, c = 0.055;
+  /* A real double-six bone is about 50 x 25 x 9mm, so the thickness is
+     a bit over a third of the width — 0.34 against 1.0 here. It was
+     0.32, which is close, but the chamfer was 0.055: about a millimetre
+     and a half, too fine to catch the light at any size the table is
+     ever drawn. At 0.09 the bevel is a band you can see, and a bevel
+     you can see is most of what makes an edge look like an edge.
+
+     hz is exactly half the felt's offset below the origin, so the bone
+     rests *on* the table rather than hovering a hundredth above it —
+     which is what a contact shadow needs in order to be believable. */
+  var hx = L.LEN / 2, hy = L.WID / 2, hz = 0.17, c = 0.062;
   var P = [], N = [], U = [], I = [];
   function quad(a, b, cc, d, n, uvs) {
     var base = P.length / 3, i;
@@ -177,17 +243,30 @@ function boneGeometry() {
        [[0, 1], [1, 1], [1, 0], [0, 0]]);
   quad([0, -iy, hz], [ix, -iy, hz], [ix, iy, hz], [0, iy, hz], [0, 0, 1],
        [[0, 1], [1, 1], [1, 0], [0, 0]]);
-  /* the chamfer: four flat cuts around the top edge */
+  /* The chamfer: four flat cuts around the top edge, **mitred** at the
+     corners — each cut runs out to the bone's true corner at (±hx, ±hy),
+     so adjacent cuts share a whole edge and meet like a picture frame.
+
+     The obvious alternative stops each cut short by the chamfer width,
+     and it does not close: adjacent cuts then touch at a single point
+     with an open triangle between them, and the side walls below them
+     leave an open vertical sliver at each corner besides. At a 0.055
+     bevel those holes were a pixel or two and went unseen for the life
+     of the room. Widening the bevel so the edges would read turned all
+     four into notches bitten out of the silhouette with the felt
+     showing through — and patching them with corner triangles fixes
+     only the top half, while breaking convexity against the square
+     back. Mitring costs nothing and closes both. */
   var d = 0.7071;
-  quad([-ix, -iy, hz], [-ix, iy, hz], [-hx, hy - c, hz - c], [-hx, -hy + c, hz - c], [-d, 0, d]);
-  quad([ix, -iy, hz], [hx, -hy + c, hz - c], [hx, hy - c, hz - c], [ix, iy, hz], [d, 0, d]);
-  quad([-ix, -iy, hz], [-hx + c, -hy, hz - c], [hx - c, -hy, hz - c], [ix, -iy, hz], [0, -d, d]);
-  quad([-ix, iy, hz], [ix, iy, hz], [hx - c, hy, hz - c], [-hx + c, hy, hz - c], [0, d, d]);
-  /* the four sides, straight down to the felt */
-  quad([-hx, -hy + c, hz - c], [-hx, hy - c, hz - c], [-hx, hy - c, -hz], [-hx, -hy + c, -hz], [-1, 0, 0]);
-  quad([hx, -hy + c, hz - c], [hx, -hy + c, -hz], [hx, hy - c, -hz], [hx, hy - c, hz - c], [1, 0, 0]);
-  quad([-hx + c, -hy, hz - c], [-hx + c, -hy, -hz], [hx - c, -hy, -hz], [hx - c, -hy, hz - c], [0, -1, 0]);
-  quad([-hx + c, hy, hz - c], [hx - c, hy, hz - c], [hx - c, hy, -hz], [-hx + c, hy, -hz], [0, 1, 0]);
+  quad([-ix, -iy, hz], [-ix, iy, hz], [-hx, hy, hz - c], [-hx, -hy, hz - c], [-d, 0, d]);
+  quad([ix, -iy, hz], [hx, -hy, hz - c], [hx, hy, hz - c], [ix, iy, hz], [d, 0, d]);
+  quad([-ix, -iy, hz], [-hx, -hy, hz - c], [hx, -hy, hz - c], [ix, -iy, hz], [0, -d, d]);
+  quad([-ix, iy, hz], [ix, iy, hz], [hx, hy, hz - c], [-hx, hy, hz - c], [0, d, d]);
+  /* the four sides, full width, straight down to the felt */
+  quad([-hx, -hy, hz - c], [-hx, hy, hz - c], [-hx, hy, -hz], [-hx, -hy, -hz], [-1, 0, 0]);
+  quad([hx, -hy, hz - c], [hx, -hy, -hz], [hx, hy, -hz], [hx, hy, hz - c], [1, 0, 0]);
+  quad([-hx, -hy, hz - c], [-hx, -hy, -hz], [hx, -hy, -hz], [hx, -hy, hz - c], [0, -1, 0]);
+  quad([-hx, hy, hz - c], [hx, hy, hz - c], [hx, hy, -hz], [-hx, hy, -hz], [0, 1, 0]);
   /* and the back */
   quad([-hx, -hy, -hz], [-hx, hy, -hz], [hx, hy, -hz], [hx, -hy, -hz], [0, 0, -1]);
   return { P: P, N: N, U: U, I: I };
@@ -212,11 +291,30 @@ function boneMesh(gl) {
 function planeMesh(gl, size) {
   var P = [-size, -size, 0, size, -size, 0, size, size, 0, -size, size, 0];
   var N = [0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1];
-  var U = [0, 0, 6, 0, 6, 6, 0, 6];
+  /* 20 repeats across the plane rather than 6. At 6 a single 128px tile
+     of cloth was stretched over four bone-lengths of table, so the felt
+     under a bone was a smooth brown gradient while the bone on top of it
+     was razor sharp — and that mismatch reads as a sticker on a
+     backdrop. At 20 the weave is about a bone long and the two surfaces
+     belong to the same photograph. */
+  var U = [0, 0, 20, 0, 20, 20, 0, 20];
   var I = [0, 1, 2, 0, 2, 3];
   var m = { pos: gl.createBuffer(), nrm: gl.createBuffer(), uv: gl.createBuffer(), idx: gl.createBuffer(), count: 6 };
   gl.bindBuffer(gl.ARRAY_BUFFER, m.pos); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(P), gl.STATIC_DRAW);
   gl.bindBuffer(gl.ARRAY_BUFFER, m.nrm); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(N), gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, m.uv); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(U), gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.idx);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(I), gl.STATIC_DRAW);
+  return m;
+}
+
+/* the unit quad the marks on the felt are drawn on: -1..1, UV 0..1 */
+function markMesh(gl) {
+  var P = [-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0];
+  var U = [0, 1, 1, 1, 1, 0, 0, 0];
+  var I = [0, 1, 2, 0, 2, 3];
+  var m = { pos: gl.createBuffer(), uv: gl.createBuffer(), idx: gl.createBuffer(), count: 6 };
+  gl.bindBuffer(gl.ARRAY_BUFFER, m.pos); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(P), gl.STATIC_DRAW);
   gl.bindBuffer(gl.ARRAY_BUFFER, m.uv); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(U), gl.STATIC_DRAW);
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.idx);
   gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(I), gl.STATIC_DRAW);
@@ -244,9 +342,14 @@ var PIPS = [
    the browser check could not either: it only asked whether the canvas
    had more than one colour on it, and a black bone on brown felt does.
    It took a screenshot to catch, which is why one gets taken. */
-var ATLAS_W = 1024, ATLAS_CELLS = 8;
+/* 256 to a cell, not 128. A bone can cover 300 device pixels across on
+   a phone at 3x when the line is short and the camera has pulled in, so
+   a 128px cell was being magnified past 2x and every pip came out a
+   soft grey smudge — the drilling detail was there and then thrown away
+   by the magnification filter. 2048x256 RGBA is 2MB, paid once. */
+var ATLAS_W = 2048, ATLAS_CELLS = 8;
 function pipAtlas(gl, pipColour) {
-  var S = 128, cv = document.createElement("canvas");
+  var S = 256, cv = document.createElement("canvas");
   cv.width = ATLAS_W; cv.height = S;
   var g = cv.getContext("2d");
   for (var n = 0; n <= 6; n++) {
@@ -261,17 +364,68 @@ function pipAtlas(gl, pipColour) {
        far end of each half: invisible under the chamfer, and no divider
        anywhere. The two halves are laid out along x; the seam is at
        u = 1, not v = 1. */
+    /* An engraved line, not a strip of metal laid on top. It was 4.5%
+       of a cell wide at half alpha, and since both halves draw their
+       own the two met as one 9%-wide light grey bar sitting proud of
+       the face. Narrower and darker, with a hairline of catchlight
+       along the bottom edge, and it reads as a groove cut into the
+       bone — which is what it is. */
+    g.globalAlpha = 0.62;
     g.fillStyle = pipColour;
-    g.globalAlpha = 0.5;
-    g.fillRect(ox + S * 0.955, S * 0.05, S * 0.045, S * 0.90);
+    g.fillRect(ox + S * 0.972, S * 0.055, S * 0.028, S * 0.89);
+    g.globalAlpha = 0.30;
+    g.fillStyle = "#fffaf0";
+    g.fillRect(ox + S * 0.972, S * 0.055 + S * 0.89, S * 0.028, S * 0.010);
     g.globalAlpha = 1;
+    /* A pip on a real bone is a hole, drilled and filled — not a sticker.
+       Three coats make it read as one, and the order matters:
+
+         1. a soft dark halo on the face just outside the rim, which is
+            the light the hole steals from the surface around it;
+         2. the bore itself, shaded across rather than filled flat — the
+            wall the light reaches is the one *opposite* the lamp, so a
+            pit is bright on the far side and darkest on the near one.
+            That is the reverse of a dome, and getting it backwards is
+            what makes drawn pips look like bumps;
+         3. a thin bright arc on the lip where the bevel of the hole
+            catches the bulb.
+
+       The lamp is toward -y on the table, and v runs 0 at +y to 1 at
+       -y, so on this canvas the light arrives from the bottom. The lit
+       wall is therefore the top of each bore. */
     for (var i = 0; i < set.length; i++) {
       var px = ox + S * 0.5 + (set[i][0] - 1) * S * 0.29;
       var py = S * 0.5 + (set[i][1] - 1) * S * 0.29;
-      g.beginPath(); g.arc(px, py, S * 0.105, 0, Math.PI * 2);
-      g.fillStyle = pipColour; g.fill();
-      g.beginPath(); g.arc(px - S * 0.03, py - S * 0.03, S * 0.045, 0, Math.PI * 2);
-      g.fillStyle = "rgba(255,255,255,.22)"; g.fill();
+      var r = S * 0.105;
+
+      /* The halo starts at the rim, not inside it. Starting at 0.9r
+         darkened the last tenth of the bore as well as the face around
+         it, which smeared the one edge that has to stay crisp: a pip
+         reads as drilled because its outline is sharp and its inside
+         is not. */
+      var halo = g.createRadialGradient(px, py, r, px, py, r * 1.5);
+      halo.addColorStop(0, "rgba(0,0,0,.16)");
+      halo.addColorStop(1, "rgba(0,0,0,0)");
+      g.fillStyle = halo;
+      g.beginPath(); g.arc(px, py, r * 1.5, 0, Math.PI * 2); g.fill();
+
+      g.save();
+      g.beginPath(); g.arc(px, py, r, 0, Math.PI * 2); g.clip();
+      g.fillStyle = pipColour;
+      g.fillRect(px - r, py - r, r * 2, r * 2);
+      var bore = g.createLinearGradient(px, py - r, px, py + r);
+      bore.addColorStop(0, "rgba(255,244,224,.30)");    /* the lit far wall */
+      bore.addColorStop(0.42, "rgba(0,0,0,0)");
+      bore.addColorStop(1, "rgba(0,0,0,.55)");          /* the near wall, in its own shadow */
+      g.fillStyle = bore;
+      g.fillRect(px - r, py - r, r * 2, r * 2);
+      g.restore();
+
+      g.beginPath();
+      g.arc(px, py, r * 0.94, Math.PI * 1.08, Math.PI * 1.92);
+      g.strokeStyle = "rgba(255,250,238,.42)";
+      g.lineWidth = S * 0.016;
+      g.stroke();
     }
   }
   var tex = gl.createTexture();
@@ -284,6 +438,80 @@ function pipAtlas(gl, pipColour) {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   gl.generateMipmap(gl.TEXTURE_2D);
   return tex;
+}
+
+/* ---------- the two marks on the felt ----------
+   Both are painted as a signed distance to a rounded rectangle the size
+   of a bone's footprint, which is the cheap way to get a soft edge
+   without a blur filter (`ctx.filter` is not old-Safari's strong suit,
+   and this room has to work on a phone somebody has had for a while).
+
+   The footprint occupies the middle 60% of the texture; the rest is the
+   penumbra it needs room to fall off into. `FOOT` is that fraction, and
+   the draw code scales the quad by 1/FOOT so the sharp part lands
+   exactly on the bone. Change one without the other and every shadow on
+   the table is the wrong size. */
+var FOOT = 0.6;
+function sdTexture(gl, paint) {
+  var W = 256, H = 128, cv = document.createElement("canvas");
+  cv.width = W; cv.height = H;
+  var g = cv.getContext("2d");
+  var img = g.createImageData(W, H), d = img.data;
+  /* half-extents of the bone's footprint, in pixels, and its corner
+     radius — a bone is chamfered, so its shadow has rounded corners */
+  var hw = W * 0.5 * FOOT, hh = H * 0.5 * FOOT, r = H * 0.09;
+  for (var y = 0; y < H; y++) {
+    for (var x = 0; x < W; x++) {
+      var dx = Math.max(Math.abs(x + 0.5 - W / 2) - (hw - r), 0);
+      var dy = Math.max(Math.abs(y + 0.5 - H / 2) - (hh - r), 0);
+      var dist = Math.hypot(dx, dy) - r;
+      var i = (y * W + x) * 4;
+      var a = paint(dist, H);
+      d[i] = d[i + 1] = d[i + 2] = 255;
+      d[i + 3] = Math.round(Math.max(0, Math.min(1, a)) * 255);
+    }
+  }
+  g.putImageData(img, 0, 0);
+  var tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  return tex;
+}
+function smooth(t) { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); }
+
+/* The shadow of a bone lying flat on felt under a bulb a long way up:
+   almost black where the two touch, and gone within about a third of a
+   bone's width. Real contact shadows are tight and dark at the contact
+   and diffuse quickly — a uniform grey blob is the giveaway. */
+function shadowTexture(gl) {
+  return sdTexture(gl, function (dist, H) {
+    /* Two falloffs, not one. A single wide gradient is an airbrushed
+       blob — it was, and it read as a glow around the bone rather than
+       as a shadow under it. What a small object on a table actually
+       casts is a hard, nearly black line right at the contact and a
+       much fainter wash beyond it, so: a tight core plus a wide skirt,
+       added. The core is what makes the bone look like it is touching
+       something. */
+    var core = 0.72 * smooth(1 - dist / (H * 0.045));
+    var skirt = 0.26 * smooth(1 - dist / (H * 0.17));
+    return core + skirt;
+  });
+}
+
+/* An open end: a ring on the felt rather than a slab standing on it.
+   The old marker was the bone mesh squashed to a tenth of its height,
+   which at a glance is a pale grey shard sticking out of the line —
+   it read as broken geometry, not as an invitation. */
+function slotTexture(gl) {
+  return sdTexture(gl, function (dist, H) {
+    var edge = H * 0.030;
+    return smooth(1 - Math.abs(dist + edge) / edge) * 0.95;
+  });
 }
 
 function feltTexture(gl, skin) {
@@ -352,16 +580,36 @@ function Gfx3D(canvas) {
     uv: gl.getAttribLocation(pr, "aUV")
   };
   this.u = {};
-  ["uProj", "uView", "uModel", "uColor", "uEye", "uLamp", "uSpec", "uPower",
-   "uRim", "uAlpha", "uTex", "uAmb", "uSampler"].forEach(function (n) {
+  ["uProj", "uView", "uModel", "uColor", "uEye", "uLamp", "uBounce", "uSpec",
+   "uPower", "uRim", "uAlpha", "uTex", "uAmb", "uSampler"].forEach(function (n) {
     this.u[n] = gl.getUniformLocation(pr, n);
+  }, this);
+
+  /* the second, unlit program: contact shadows and open-end slots */
+  var fvs = compile(gl, gl.VERTEX_SHADER, FLAT_VS), ffs = compile(gl, gl.FRAGMENT_SHADER, FLAT_FS);
+  if (!fvs || !ffs) return;
+  var fpr = gl.createProgram();
+  gl.attachShader(fpr, fvs); gl.attachShader(fpr, ffs); gl.linkProgram(fpr);
+  if (!gl.getProgramParameter(fpr, gl.LINK_STATUS)) return;
+  this.fpr = fpr;
+  this.fa = { pos: gl.getAttribLocation(fpr, "aPos"), uv: gl.getAttribLocation(fpr, "aUV") };
+  this.fu = {};
+  ["uProj", "uView", "uModel", "uColor", "uAlpha", "uSampler"].forEach(function (n) {
+    this.fu[n] = gl.getUniformLocation(fpr, n);
   }, this);
 
   this.bone = boneMesh(gl);
   this.plane = planeMesh(gl, 26);
+  this.mark = markMesh(gl);
   this.pipTex = null; this.feltTex = null;
+  this.shadowTex = shadowTexture(gl);
+  this.slotTex = slotTexture(gl);
   this.skin = null;
-  this.orbit = { yaw: 0, pitch: 0.94, dist: 20, target: 0.94 };
+  /* 0.86 rather than 0.94: eight degrees lower puts the camera at 49°
+     above the felt instead of 54°, which is worth about a tenth more of
+     every bone's near side. It is the difference between seeing that a
+     bone has a thickness and merely being told so. */
+  this.orbit = { yaw: 0, pitch: 0.86, dist: 20, target: 0.86 };
   this.ok = true;
   this.lost = false;
 
@@ -418,6 +666,46 @@ Gfx3D.prototype.bind = function (mesh) {
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, mesh.idx);
 };
 
+/* ---------- the marks on the felt ----------
+   Both the contact shadows and the open-end slots are the same flat
+   textured quad under the unlit program; only the texture, the colour
+   and the height above the felt differ. They are drawn with the depth
+   test on but depth writes off, so they can never occlude each other or
+   a bone — a shadow that hides the thing casting it is a long-running
+   joke rather than a rendering technique. */
+Gfx3D.prototype.marks = function (proj, view, tex, colour, list) {
+  if (!list.length) return;
+  var gl = this.gl, fu = this.fu, fa = this.fa, m = this.mark, i;
+  gl.useProgram(this.fpr);
+  gl.uniformMatrix4fv(fu.uProj, false, proj);
+  gl.uniformMatrix4fv(fu.uView, false, view);
+  gl.uniform3f(fu.uColor, colour[0], colour[1], colour[2]);
+  gl.uniform1i(fu.uSampler, 0);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.bindBuffer(gl.ARRAY_BUFFER, m.pos); gl.enableVertexAttribArray(fa.pos);
+  gl.vertexAttribPointer(fa.pos, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, m.uv); gl.enableVertexAttribArray(fa.uv);
+  gl.vertexAttribPointer(fa.uv, 2, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.idx);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.depthMask(false);
+  /* the sharp part of the texture is the middle FOOT of it, so the quad
+     has to be that much bigger than the bone it stands in for */
+  var sx = (L.LEN / 2) / FOOT, sy = (L.WID / 2) / FOOT;
+  for (i = 0; i < list.length; i++) {
+    var k = list[i];
+    gl.uniform1f(fu.uAlpha, k.a);
+    gl.uniformMatrix4fv(fu.uModel, false,
+      trs(k.x, k.y, k.z, k.rot, sx * (k.s || 1), sy * (k.s || 1), 1));
+    gl.drawElements(gl.TRIANGLES, m.count, gl.UNSIGNED_SHORT, 0);
+  }
+  gl.depthMask(true);
+  gl.disable(gl.BLEND);
+  gl.useProgram(this.pr);
+};
+
 Gfx3D.prototype.draw = function (scene, now) {
   if (!this.ok || !this.skin) return;
   var gl = this.gl, sk = this.skin, u = this.u, i;
@@ -444,9 +732,14 @@ Gfx3D.prototype.draw = function (scene, now) {
   var spanX = Math.max(3, bb.x1 - bb.x0) + 0.9, spanY = Math.max(2, bb.y1 - bb.y0) + 0.9;
   var asp = this.w / Math.max(1, this.h);
   var vis = 2 * Math.tan(0.86 / 2);
-  /* the table is seen at a slant, so its depth foreshortens — the 0.68
-     is sin(pitch), the fraction of a bone's length that survives it */
-  var need = Math.max(spanX / (vis * Math.max(0.35, asp)), spanY / (vis * 0.68));
+  /* The table is seen at a slant, so its depth foreshortens by sin of
+     the pitch. Taken from the pitch rather than written down as a
+     number: it used to be a hard 0.68 next to a comment calling it
+     sin(pitch) when the pitch was 0.94 and its sine 0.81, so the two
+     had already drifted apart, and lowering the camera would have
+     silently mis-framed every long line. */
+  var fore = Math.max(0.35, Math.sin(this.orbit.pitch));
+  var need = Math.max(spanX / (vis * Math.max(0.35, asp)), spanY / (vis * fore));
   this.orbit.dist += (Math.min(42, Math.max(7, need * 1.06)) - this.orbit.dist) * 0.10;
   var cx = (bb.x0 + bb.x1) / 2, cy = (bb.y0 + bb.y1) / 2;
 
@@ -464,7 +757,24 @@ Gfx3D.prototype.draw = function (scene, now) {
   gl.uniformMatrix4fv(u.uProj, false, proj);
   gl.uniformMatrix4fv(u.uView, false, view);
   gl.uniform3f(u.uEye, eye[0], eye[1], eye[2]);
-  gl.uniform3f(u.uLamp, cx, cy - 1.5, 15.0);
+  /* A bulb hanging over the table, not the sun.
+
+     At z = 15 the light arrived within a few degrees of straight down
+     everywhere, so every top face was lit identically and the line read
+     as one flat sticker. At 7.5 the direction changes across the felt,
+     which is what gives a long line its gradient.
+
+     It also hangs *beyond* the table and off to one side rather than
+     over the near edge. Directly overhead, a bone's shadow is directly
+     underneath it — hidden by the bone, which is the one place a shadow
+     does no good at all. From over the far shoulder the shadows fall
+     towards the viewer where they can be seen, and the near faces drop
+     into the fill, which is the light every photograph of a small
+     object on a table is set up to get. */
+  var felt = hex3(sk.table.felt);
+  var lamp = [cx - 2.6, cy + 2.2, 7.5];
+  gl.uniform3f(u.uLamp, lamp[0], lamp[1], lamp[2]);
+  gl.uniform3f(u.uBounce, felt[0], felt[1], felt[2]);
   gl.uniform1i(u.uSampler, 0);
   gl.activeTexture(gl.TEXTURE0);
 
@@ -472,39 +782,22 @@ Gfx3D.prototype.draw = function (scene, now) {
   gl.bindTexture(gl.TEXTURE_2D, this.feltTex);
   this.bind(this.plane);
   gl.uniformMatrix4fv(u.uModel, false, trs(cx, cy, -0.17, 0, 1, 1, 1));
-  var felt = hex3(sk.table.felt);
   gl.uniform3f(u.uColor, felt[0], felt[1], felt[2]);
   gl.uniform1f(u.uSpec, 0.05 + sk.table.gloss * 0.30);
   gl.uniform1f(u.uPower, 14);
   gl.uniform1f(u.uRim, 0);
   gl.uniform1f(u.uAlpha, 1);
   gl.uniform1f(u.uTex, 1);
-  gl.uniform1f(u.uAmb, 0.34);
+  gl.uniform1f(u.uAmb, 0.30);
   gl.drawElements(gl.TRIANGLES, this.plane.count, gl.UNSIGNED_SHORT, 0);
 
-  /* the bones */
-  var s = this.surf;
-  gl.bindTexture(gl.TEXTURE_2D, this.pipTex);
-  this.bind(this.bone);
-  var face = hex3(sk.bones.face);
-  gl.uniform3f(u.uColor, face[0], face[1], face[2]);
-  gl.uniform1f(u.uSpec, s.spec);
-  gl.uniform1f(u.uPower, s.power);
-  gl.uniform1f(u.uRim, s.rim);
-  gl.uniform1f(u.uTex, 1);
-  gl.uniform1f(u.uAmb, 0.26);
-  if (s.translucent) {
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-  }
-  gl.uniform1f(u.uAlpha, s.alpha);
-
-  var t = scene.table;
+  /* Where every bone actually ends up this frame, worked out once. The
+     shadows have to agree with the bones exactly, and the only way to
+     be sure of that is for both to read the same list rather than each
+     recomputing the animation curve and drifting apart. */
+  var t = scene.table, place = [], shade = [];
   for (i = 0; i < t.bones.length; i++) {
     var b = t.bones[i];
-    var a1 = Rl.A(b.tile), b1 = Rl.B(b.tile);
-    if (b.flip) { var tmp = a1; a1 = b1; b1 = tmp; }
-    this.setFace(a1, b1);
     var px = b.x, py = b.y, rot = b.rot * Math.PI / 180, z = 0;
     var anim = scene.anim && scene.anim.idx === b.idx ? scene.anim : null;
     if (anim) {
@@ -516,32 +809,66 @@ Gfx3D.prototype.draw = function (scene, now) {
          small bounce of the slam at the end of it */
       z = Math.sin(k * Math.PI) * 2.4 + (k > 0.86 ? Math.sin((k - 0.86) / 0.14 * Math.PI) * 0.16 : 0);
     }
-    gl.uniformMatrix4fv(u.uModel, false, trs(px, py, z, rot, 1, 1, 1));
+    place.push({ b: b, x: px, y: py, z: z, rot: rot });
+    /* The shadow falls directly away from the bulb, which is why the
+       offset is worked out from the lamp rather than nudged by hand: a
+       hand-picked direction is right for one bone and wrong for the one
+       at the other end of a long line, and the whole point of a shadow
+       is that they all agree about where the light is.
+
+       A bone in the air throws a bigger, fainter shadow that slides in
+       under it as it lands. That is the cue that says a bone is *above*
+       the table rather than sliding along it — without it the slam
+       reads as a bone growing, because nothing else in the frame
+       carries height. */
+    var ox = px - lamp[0], oy = py - lamp[1];
+    var od = Math.hypot(ox, oy) || 1;
+    var lift = Math.min(1, z / 2.4);
+    var reach = 0.10 + lift * 1.5;
+    shade.push({
+      x: px + ox / od * reach, y: py + oy / od * reach, z: -0.163, rot: rot,
+      s: 1 + lift * 0.45, a: (1 - lift * 0.66) * 0.95
+    });
+  }
+  this.marks(proj, view, this.shadowTex, [0.05, 0.03, 0.02], shade);
+
+  /* the bones */
+  var s = this.surf;
+  gl.bindTexture(gl.TEXTURE_2D, this.pipTex);
+  this.bind(this.bone);
+  var face = hex3(sk.bones.face);
+  gl.uniform3f(u.uColor, face[0], face[1], face[2]);
+  gl.uniform1f(u.uSpec, s.spec);
+  gl.uniform1f(u.uPower, s.power);
+  gl.uniform1f(u.uRim, s.rim);
+  gl.uniform1f(u.uTex, 1);
+  gl.uniform1f(u.uAmb, 0.14);
+  if (s.translucent) {
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  }
+  gl.uniform1f(u.uAlpha, s.alpha);
+
+  for (i = 0; i < place.length; i++) {
+    var p = place[i];
+    var a1 = Rl.A(p.b.tile), b1 = Rl.B(p.b.tile);
+    if (p.b.flip) { var tmp = a1; a1 = b1; b1 = tmp; }
+    this.setFace(a1, b1);
+    gl.uniformMatrix4fv(u.uModel, false, trs(p.x, p.y, p.z, p.rot, 1, 1, 1));
     gl.drawElements(gl.TRIANGLES, this.bone.count, gl.UNSIGNED_SHORT, 0);
   }
   if (s.translucent) gl.disable(gl.BLEND);
 
-  /* the ghost slots, laid flat and faintly, so the ends read as places
-     you can put something rather than as decoration */
+  /* the open ends, marked on the felt itself */
   if (scene.ghosts && scene.ghosts.length) {
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    gl.depthMask(false);
-    var mk = hex3(sk.marks.ghost);
-    gl.uniform3f(u.uColor, mk[0], mk[1], mk[2]);
-    gl.uniform1f(u.uTex, 0);
-    gl.uniform1f(u.uSpec, 0);
-    gl.uniform1f(u.uRim, 0);
-    gl.uniform1f(u.uAmb, 0.9);
-    gl.uniform1f(u.uAlpha, 0.22 + 0.16 * Math.sin(now / 320));
+    var pulse = 0.42 + 0.26 * Math.sin(now / 320);
+    var slots = [];
     for (i = 0; i < scene.ghosts.length; i++) {
       var gh = scene.ghosts[i];
-      gl.uniformMatrix4fv(u.uModel, false,
-        trs(gh.x, gh.y, -0.14, (gh.h % 2 === 0 ? 0 : Math.PI / 2), 0.94, 0.94, 0.10));
-      gl.drawElements(gl.TRIANGLES, this.bone.count, gl.UNSIGNED_SHORT, 0);
+      slots.push({ x: gh.x, y: gh.y, z: -0.158,
+                   rot: (gh.h % 2 === 0 ? 0 : Math.PI / 2), s: 0.97, a: pulse });
     }
-    gl.depthMask(true);
-    gl.disable(gl.BLEND);
+    this.marks(proj, view, this.slotTex, hex3(sk.marks.ghost), slots);
   }
 
   /* remember the camera so a tap can be turned back into table coords */
@@ -621,7 +948,10 @@ Gfx3D.prototype.destroy = function () {
   try {
     if (this.pipTex) gl.deleteTexture(this.pipTex);
     if (this.feltTex) gl.deleteTexture(this.feltTex);
+    if (this.shadowTex) gl.deleteTexture(this.shadowTex);
+    if (this.slotTex) gl.deleteTexture(this.slotTex);
     if (this.pr) gl.deleteProgram(this.pr);
+    if (this.fpr) gl.deleteProgram(this.fpr);
   } catch (e) { /* the context may already be gone; nothing to free */ }
   this.ok = false;
 };
