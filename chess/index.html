@@ -265,6 +265,58 @@
   .waiting .qrFrame{animation:breathe 2.4s ease-in-out infinite}
   @keyframes breathe{0%,100%{box-shadow:0 10px 30px rgba(0,0,0,.45)} 50%{box-shadow:0 10px 30px rgba(0,0,0,.45), 0 0 0 8px rgba(240,160,32,.14)}}
 
+  /* ---------- four letters: the front door ----------
+     The code is the biggest thing on the screen because it is the only
+     thing anybody has to do: read it out, or type it in. */
+  .codeBig{
+    font:700 clamp(2.4em,13vw,3.6em)/1 ui-monospace,Menlo,Consolas,monospace;
+    letter-spacing:.18em; text-indent:.18em; text-align:center; color:var(--glow);
+    background:#171310; border:1px solid var(--line); border-radius:16px;
+    padding:.3em .1em .26em; margin:10px 0 4px;
+    user-select:text; -webkit-user-select:text;
+  }
+  .codeBig.pending{color:var(--soft)}
+  .roomWait{display:flex; align-items:center; justify-content:center; gap:8px;
+    font-size:.84em; color:var(--soft); margin:4px 0 8px; min-height:22px}
+  .roomWait .spin{width:15px; height:15px; border-width:2px}
+  input.codeIn{
+    width:100%; text-align:center; text-transform:uppercase;
+    font:700 clamp(1.9em,11vw,2.8em)/1.25 ui-monospace,Menlo,Consolas,monospace;
+    letter-spacing:.3em; text-indent:.3em;
+    background:#171310; color:var(--ink); border:1px solid var(--line); border-radius:14px;
+    padding:.16em 0; margin:6px 0 2px; user-select:text; -webkit-user-select:text;
+  }
+  input.codeIn:focus{border-color:var(--amber); outline:none}
+  .roomList{display:flex; flex-direction:column; gap:6px; margin:10px 0 4px}
+  .roomRow{
+    display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+    background:var(--card2); border:1px solid var(--line); border-radius:12px; padding:8px 12px;
+  }
+  .roomRow:hover{border-color:var(--amber)}
+  .roomRow:active{transform:scale(.99)}
+  .rrCode{font:700 1.1em ui-monospace,Menlo,Consolas,monospace; letter-spacing:.12em; color:var(--glow); flex:none}
+  .rrTx{flex:1; min-width:0; font-size:.86em}
+  .rrTx b{display:block; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .rrTx i{color:var(--soft); font-style:normal; font-size:.9em}
+  .rrGo{color:var(--amber); font-size:.85em; flex:none}
+  .roomEmpty{font-size:.85em; color:var(--soft); text-align:center; padding:10px 4px}
+
+  /* ---------- the link's own pulse, on the board ----------
+     A game that has gone quiet should say so. This is the difference
+     between "it's thinking" and "they're in a tunnel". */
+  #netChip{
+    position:absolute; top:40px; left:50%; transform:translateX(-50%);
+    background:rgba(20,16,12,.82); border:1px solid var(--line); border-radius:999px;
+    padding:3px 12px; font-size:.76em; color:var(--soft); z-index:4; white-space:nowrap;
+    display:flex; align-items:center; gap:7px; pointer-events:auto;
+  }
+  #netChip .pulse{width:8px; height:8px; border-radius:50%; background:var(--good); flex:none}
+  #netChip.slow .pulse{background:var(--glow)}
+  #netChip.stale .pulse, #netChip.healing .pulse{background:var(--amber); animation:blip 1s ease-in-out infinite}
+  #netChip.lost .pulse{background:var(--bad); animation:blip 1s ease-in-out infinite}
+  #netChip.healing, #netChip.lost{color:var(--ink); border-color:var(--amber)}
+  @keyframes blip{0%,100%{opacity:.25} 50%{opacity:1}}
+
   /* ---------- the moment the boards join ---------- */
   .linkedCard{max-width:420px; text-align:center}
   .handshake{
@@ -452,6 +504,7 @@
         <div class="clock off" id="clockTop">5:00</div>
       </div>
       <div id="turnStrip">…</div>
+      <div id="netChip" class="hide"><span class="pulse"></span><span id="netChipTx">linked</span></div>
       <div class="pbar bot">
         <div class="ptag"><span id="nameBot">White</span><span class="cap" id="capBot"></span></div>
         <div class="clock off" id="clockBot">5:00</div>
@@ -550,8 +603,36 @@
       </div>
       <label class="nameLbl" for="lanName">Your name <small>— your opponent will see it</small></label>
       <input class="namebox" id="lanName" maxlength="18" placeholder="e.g. Sam" autocomplete="nickname">
-      <button class="bigbtn" id="linkHostBtn"><span class="em">♔</span><span><b>Start a board</b><small>You'll show a code for your friend to scan.</small></span></button>
-      <button class="bigbtn" id="linkJoinBtn"><span class="em">♚</span><span><b>Join their board</b><small>Point your camera at their code.</small></span></button>
+      <button class="bigbtn hide" id="linkResume"><span class="em">🕯️</span><span><b>Rejoin your board</b><small id="linkResumeSub">…</small></span></button>
+      <button class="bigbtn" id="linkHostBtn"><span class="em">♔</span><span><b>Start a board</b><small>You'll get four letters to read out.</small></span></button>
+      <button class="bigbtn" id="linkJoinBtn"><span class="em">♚</span><span><b>Join a board</b><small>Type the four letters they read you.</small></span></button>
+    </div>
+
+    <!-- the front door: the host's four letters -->
+    <div id="linkRoom" class="hide">
+      <h2 id="roomTitle">Your board is open</h2>
+      <p id="roomHow">Read these four letters to your friend. On their device: <b>Play together</b> → <b>Join a board</b>.</p>
+      <div class="codeBig pending" id="roomCode" aria-live="polite">····</div>
+      <div class="roomWait" id="roomWait"><span class="spin"></span><span id="roomWaitTx">opening the board…</span></div>
+      <div class="rowbtns linkActions">
+        <button class="chip" id="roomShare">📤 Send the code</button>
+        <button class="chip" id="roomOther">🔳 Codes &amp; QR instead</button>
+      </div>
+      <p class="linkNote" id="roomNote">The four letters only carry the handshake. The game itself goes straight between the two devices.</p>
+    </div>
+
+    <!-- the front door: the joiner types four letters -->
+    <div id="linkJoinRoom" class="hide">
+      <h2>Type their four letters</h2>
+      <p id="joinHow">Ask your friend to tap <b>Start a board</b> — they'll read you four letters.</p>
+      <input class="codeIn" id="roomIn" maxlength="4" inputmode="latin" autocapitalize="characters"
+             autocomplete="off" spellcheck="false" placeholder="····" aria-label="Their four-letter code">
+      <div class="roomWait" id="joinWait"><span id="joinWaitTx">four letters and you're in</span></div>
+      <div class="roomList" id="roomList"></div>
+      <div class="rowbtns linkActions">
+        <button class="chip" id="joinOther">🔳 Codes &amp; QR instead</button>
+      </div>
+      <p class="linkNote" id="joinNote">Boards waiting nearby show up here on their own.</p>
     </div>
 
     <!-- the handshake: same shell for both sides -->
@@ -777,6 +858,7 @@
 <script src="eco.js"></script>
 <script src="gfx2d.js"></script>
 <script src="gfx3d.js"></script>
+<script src="room.js"></script>
 <script src="net.js"></script>
 <script src="app.js"></script>
 </body>

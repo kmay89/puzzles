@@ -77,8 +77,13 @@ gfx3d.js      raw WebGL 1: chamfered bones, a generated pip atlas, one
               warm bulb, an orbit camera that frames the whole line
 gfx2d.js      the canvas twin — the safety net, the small-phone option,
               and the painter of the hand in *both* modes
+room.js       the shared front door: four-letter room codes over the
+              site's mailbox, the link heartbeat, the healing loop.
+              Byte-identical in every game folder here
 net.js        four seats over WebRTC: a star with the host at the
-              middle, and per-seat views so hands stay secret
+              middle, and per-seat views so hands stay secret. Sitting
+              down is four letters; a chair that drops comes back to
+              the same seat, because a seat is remembered by name
 sw.js         offline shell + update notice (bump VERSION on release)
 manifest.webmanifest, icons/
 tools/        dev-only, never shipped — see below

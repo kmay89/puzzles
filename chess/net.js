@@ -1,19 +1,28 @@
-/* net.js — two chairs, one board, no server.
+/* net.js — two chairs, one board, no server worth the name.
    Same-room (LAN/nearby) two-player over a WebRTC data channel. There is
-   no signaling server and no account: the invite and its reply are short
-   codes you paste, AirDrop, or scan as QR — the whole handshake is two
-   messages. STUN only, for candidate discovery; the game itself flows
-   directly device-to-device.
+   no account and nothing about the game leaves the two devices: they
+   talk directly, STUN only, for candidate discovery.
 
-   The transport (codes, QR, non-trickle ICE) is carried over from
-   HIVEMIND's hive-link, where it has already linked many a kitchen
-   table; here it is trimmed to exactly two seats. Codes are deflated
-   when the browser can (CHESS2 ≈ half the size — smaller QR); CHESS1
-   is the plain fallback and stays accepted forever.
+   **Getting in is four letters.** The host opens a board and reads out
+   something like BUZZ; the other person types it. That is the front door
+   now, and it is the same door every game here uses — see room.js, which
+   holds the mailbox client, the heartbeat and the healing loop. The
+   mailbox stores nothing but the handshake, because a handshake is ~600
+   characters and cannot be typed while four letters can.
 
-   An invite can also carry a game in progress: if the link ever drops,
-   either player mints a fresh invite and the same game resumes from the
-   exact position and clocks. Self-healing, not self-pitying. */
+   Underneath, unchanged, is the handshake that needs no server at all:
+   the invite and its reply as codes you paste, AirDrop or scan as QR.
+   That is what happens on file://, offline, or on any fork without the
+   mailbox — the room falls back to it by itself and says so. Codes are
+   deflated when the browser can (CHESS2 ≈ half the size — smaller QR);
+   CHESS1 is the plain fallback and stays accepted forever.
+
+   Either way the link looks after itself: a heartbeat says whether the
+   other board is really there, and if it isn't, the two sides find each
+   other again under the same four letters without anybody being asked to
+   do anything. The game resumes from the exact position and clocks.
+   Self-healing, not self-pitying. */
+/* global Room */
 (function (root) {
 "use strict";
 
@@ -223,28 +232,73 @@ var Net = {
   isHost: false,
   pc: null, dc: null,
   onMessage: null, onLink: null, onDrop: null,
-  peerMeta: null
+  onHealth: null,         /* (state, info) — what the status chip renders */
+  onResync: null,         /* (msg) — a full state frame arriving after a heal */
+  peerMeta: null,
+  code: null,             /* the four letters, when we came in that way      */
+  name: "",               /* my display name, kept so healing can re-knock   */
+  vitals: null,
+  everLinked: false       /* have these two boards ever met? healing cares   */
 };
 
+/* the heartbeat and the healing loop, one per link. Built lazily so a
+   paste/QR game (no mailbox, nothing to re-knock on) still gets the
+   monitoring half even though healing has nowhere to go. */
+function vitals() {
+  if (Net.vitals) return Net.vitals;
+  if (typeof Room === "undefined") return null;
+  Net.vitals = Room.vitals({
+    every: 2000, slowMs: 900, staleMs: 6000, lostMs: 11000,
+    send: function (m) { rawSend(m); },
+    down: function () { return !(Net.dc && Net.dc.readyState === "open"); },
+    heal: function () { return heal(); },
+    bye: function () { Net.code = null; drop(true); },
+    change: function (s, info) { if (Net.onHealth) Net.onHealth(s, info); }
+  });
+  return Net.vitals;
+}
+
+function channelOpen() {
+  var first = Net.state !== "linked" && !Net.everLinked;
+  Net.state = "linked";
+  Net.everLinked = true;
+  var v = vitals();
+  if (v) { if (v.on) v.well(); else v.start(); }
+  if (first && Net.onLink) Net.onLink();
+  /* a channel that opened when we had already been linked once is a
+     reunion, not a first meeting: the game re-states itself rather than
+     dealing again */
+  else if (!first && Net.onRelink) Net.onRelink();
+}
 function wireChannel(dc) {
   Net.dc = dc;
-  dc.onopen = function () {
-    Net.state = "linked";
-    if (Net.onLink) Net.onLink();
-  };
+  dc.onopen = channelOpen;
   dc.onmessage = function (e) {
     var msg = null;
     try { msg = JSON.parse(e.data); } catch (err) { return; }
-    if (msg && Net.onMessage) Net.onMessage(msg);
+    if (!msg) return;
+    var v = Net.vitals;
+    if (v && v.frame(msg)) return;          /* a heartbeat frame, not a move */
+    if (msg._ === "sync") { if (Net.onResync) Net.onResync(msg); return; }
+    if (Net.onMessage) Net.onMessage(msg);
   };
   dc.onclose = function () { drop(); };
   dc.onerror = function () { drop(); };
+  /* a pooled channel is already open by the time it is claimed, so the
+     open event has been and gone — say it happened */
+  if (dc.readyState === "open") channelOpen();
 }
-function drop() {
+/* A dropped link is only news if there is nothing to be done about it.
+   With four letters to come back to, this starts the healing loop and
+   says so quietly; without them it is the old "the link was lost". */
+function drop(final) {
   if (Net.state === "off") return;
   var was = Net.state;
   Net.state = "off";
-  if (was === "linked" && Net.onDrop) Net.onDrop();
+  if (was !== "linked") return;
+  if (!final && Net.code && Net.vitals && Net.vitals.on) { Net.vitals.tick(true); return; }
+  if (Net.vitals) { Net.vitals.stop(); Net.vitals = null; }
+  if (Net.onDrop) Net.onDrop();
 }
 
 /* host: build an offer, return the invite code. `meta` rides along —
@@ -301,22 +355,233 @@ Net.acceptReply = function (code) {
   });
 };
 
-Net.send = function (obj) {
+function rawSend(obj) {
   if (Net.dc && Net.dc.readyState === "open") {
     try { Net.dc.send(JSON.stringify(obj)); return true; } catch (e) { return false; }
   }
   return false;
+}
+Net.send = rawSend;
+/* the whole game, in one frame, for the far side to adopt wholesale.
+   Sent after every heal — cheaper than reasoning about what was missed
+   while the tunnel was on, and it cannot drift. */
+Net.resync = function (obj) {
+  obj = obj || {};
+  obj._ = "sync";
+  return rawSend(obj);
 };
+Net.onRelink = null;
 
 Net.linked = function () { return Net.state === "linked"; };
+Net.health = function () {
+  var v = Net.vitals;
+  return { state: v ? v.state : "off", rtt: v ? v.rtt : 0,
+           words: v ? v.words() : "not linked", code: Net.code };
+};
+Net.healing = function () {
+  var v = Net.vitals;
+  return !!(v && (v.state === "healing" || v.state === "lost" || v.state === "stale"));
+};
 
 Net.close = function () {
   var pc = Net.pc, dc = Net.dc;
   Net.pc = null; Net.dc = null; Net.peerMeta = null;
   Net.state = "off";
+  Net.everLinked = false;
+  if (Net.vitals) { Net.vitals.stop(); Net.vitals = null; }
+  Net.closeRoom();
   try { if (dc) { dc.onclose = null; dc.close(); } } catch (e) {}
   try { if (pc) { pc.onconnectionstatechange = null; pc.close(); } } catch (e) {}
 };
+
+/* ---------- the room: four letters ----------
+   Everything below is the typed-code way in. It sits on top of the same
+   RTCPeerConnection plumbing as the paste/QR handshake — the mailbox only
+   ever carries the handshake itself — so a board can be reached either
+   way, and one that loses the mailbox mid-game simply stops healing
+   rather than stops working. */
+var pool = [];        /* host: pigeonholes minted and waiting to be taken */
+var pollT = null;
+
+function fresh() {
+  var pc = rtc();
+  pc.onconnectionstatechange = function () {
+    if (pc.connectionState === "failed" || pc.connectionState === "closed") {
+      for (var i = 0; i < pool.length; i++) if (pool[i].pc === pc) { pool.splice(i, 1); break; }
+    }
+  };
+  return pc;
+}
+function offerFrom(pc) {
+  return pc.createOffer()
+    .then(function (o) { return pc.setLocalDescription(o); })
+    .then(function () { return iceDone(pc); })
+    .then(function () { return pc.localDescription.sdp; });
+}
+
+/* Open the board under four letters, or reclaim the four letters we
+   already had. `Room` mints the code; this side only ever supplies SDP. */
+Net.roomOpen = function (o) {
+  o = o || {};
+  if (typeof Room === "undefined") return Promise.resolve(null);
+  Net.close();                 /* whatever came before is not this board */
+  Net.isHost = true;
+  Net.name = o.host || Net.name || "Host";
+  var pc = fresh();
+  var dc = pc.createDataChannel("game", { ordered: true });
+  return offerFrom(pc).then(function (sdp) {
+    return Room.open(sdp, { host: Net.name, name: o.name, seats: 2 });
+  }).then(function (r) {
+    if (!r) { try { pc.close(); } catch (e) {} return null; }
+    pool = [{ pc: pc, dc: dc, slot: r.slot || 1 }];
+    adopt(pool[0]);
+    Net.code = r.code;
+    Net.state = "hosting";
+    roomWatch();
+    Net.spare();                 /* one ready for a latecomer, or a return */
+    return r;
+  });
+};
+/* A spare pigeonhole is what makes healing invisible: the guest whose
+   phone woke up knocks on the same code and there is already an offer
+   waiting for them. The host keeps one open for the whole game. */
+Net.spare = function () {
+  if (typeof Room === "undefined" || !Net.isHost || !Room.code) return Promise.resolve(null);
+  if (pool.length >= 3) return Promise.resolve(null);
+  var pc = fresh(), dc = pc.createDataChannel("game", { ordered: true });
+  return offerFrom(pc).then(function (sdp) { return Room.spare(sdp); }).then(function (r) {
+    if (!r || !r.slot) { try { pc.close(); } catch (e) {} return null; }
+    var slot = { pc: pc, dc: dc, slot: r.slot };
+    pool.push(slot);
+    adopt(slot);
+    return r;
+  }).catch(function () { try { pc.close(); } catch (e) {} return null; });
+};
+/* whichever pigeonhole opens first becomes *the* link; a live one being
+   replaced means the old peer is gone and this is them coming back */
+function adopt(slot) {
+  slot.dc.onopen = function () {
+    for (var i = 0; i < pool.length; i++) {
+      if (pool[i] !== slot) { try { pool[i].pc.close(); } catch (e) {} }
+    }
+    pool = [slot];
+    if (Net.pc && Net.pc !== slot.pc) { try { Net.pc.close(); } catch (e) {} }
+    Net.pc = slot.pc;
+    wireChannel(slot.dc);        /* already open — wireChannel notices     */
+    Net.spare();                 /* keep one waiting for the next time     */
+  };
+}
+function roomWatch() {
+  if (pollT) clearInterval(pollT);
+  pollT = setInterval(function () {
+    if (typeof Room === "undefined" || !Room.code || !Net.isHost) return;
+    Room.poll().then(function (r) {
+      if (!r) return;
+      var list = r.answers || [];
+      for (var i = 0; i < list.length; i++) (function (ans) {
+        for (var j = 0; j < pool.length; j++) {
+          if (pool[j].slot === ans.slot) {
+            pool[j].pc.setRemoteDescription({ type: "answer", sdp: ans.answer })
+              .catch(function () {});
+            return;
+          }
+        }
+      })(list[i]);
+      if (r.free < 1) Net.spare();
+    });
+  }, 2200);
+}
+
+/* the joiner: four letters in, and the board is theirs */
+Net.roomJoin = function (code, name) {
+  if (typeof Room === "undefined") return Promise.resolve(null);
+  Net.isHost = false;
+  Net.name = name || Net.name || "Friend";
+  return Room.knock(code, Net.name).then(function (r) {
+    if (!r) return null;
+    if (r.error) return r;
+    if (Net.pc) { try { Net.pc.close(); } catch (e) {} Net.pc = null; }
+    var pc = rtc();
+    Net.pc = pc;
+    Net.state = "joining";
+    Net.code = Room.code;
+    pc.ondatachannel = function (e) { wireChannel(e.channel); };
+    pc.onconnectionstatechange = function () {
+      if (pc.connectionState === "failed" || pc.connectionState === "closed") drop();
+    };
+    return pc.setRemoteDescription({ type: "offer", sdp: r.offer })
+      .then(function () { return pc.createAnswer(); })
+      .then(function (a) { return pc.setLocalDescription(a); })
+      .then(function () { return iceDone(pc); })
+      .then(function () { return Room.reply(r.slot, pc.localDescription.sdp); })
+      .then(function (ok) {
+        if (!ok) return { error: "that board stopped listening — try again" };
+        Room.remember({ role: "guest", code: Room.code, name: Net.name, title: r.name || "" });
+        if (!Net.vitals) { var v = vitals(); if (v && !v.on) v.start(); }
+        return { ok: true, name: r.name, host: r.host, started: r.started };
+      });
+  });
+};
+
+Net.roomList = function () {
+  return (typeof Room === "undefined") ? Promise.resolve(null) : Room.list();
+};
+/* stop advertising, but stay reachable: a started board keeps its four
+   letters precisely so a player who vanishes can come back to them */
+Net.roomStarted = function () {
+  if (typeof Room !== "undefined" && Net.isHost && Room.code) Room.shut(true, true);
+};
+/* pack up this device's half — the pigeonholes and the poll. Does not
+   speak to the mailbox; Net.roomStarted / Room.shut do that. */
+Net.closeRoom = function () {
+  if (pollT) { clearInterval(pollT); pollT = null; }
+  for (var i = 0; i < pool.length; i++) { try { pool[i].pc.close(); } catch (e) {} }
+  pool = [];
+};
+Net.roomLeave = function () {
+  if (typeof Room !== "undefined" && Net.isHost && Room.code) Room.shut(false);
+  Net.closeRoom();
+  Net.code = null;
+};
+
+/* One attempt at putting the link back. Returns false every time: what
+   makes it succeed is a channel opening, which calls vitals.well() from
+   wireChannel — so this is only ever "knock again, patiently". */
+function heal() {
+  if (typeof Room === "undefined" || !Net.code) return false;
+  if (Net.isHost) {
+    /* All the host owes a returning opponent is a pigeonhole to arrive
+       in. It must NOT re-host by reflex: re-hosting wipes the room's
+       slots, and the two sides heal at the same moment, so a reflexive
+       reopen throws away the very offer the other side has just claimed
+       — which is exactly the "that pigeonhole is gone" loop this used
+       to spin in. Reopening is for the one case that needs it: the room
+       itself has aged out of the mailbox. */
+    return Net.spare().then(function (r) {
+      if (r || pool.length) return false;      /* somewhere to arrive: wait */
+      return reopenRoom();
+    }, function () { return false; });
+  }
+  return Net.roomJoin(Net.code, Net.name).then(function () { return false; },
+                                               function () { return false; });
+}
+/* the room has gone from the mailbox; take the same four letters back so
+   nobody has to be told a new code */
+function reopenRoom() {
+  for (var i = 0; i < pool.length; i++) { try { pool[i].pc.close(); } catch (e) {} }
+  pool = [];
+  var pc = fresh(), dc = pc.createDataChannel("game", { ordered: true });
+  return offerFrom(pc).then(function (sdp) {
+    return Room.open(sdp, { host: Net.name, name: Room.title, seats: 2 });
+  }).then(function (r) {
+    if (!r) { try { pc.close(); } catch (e) {} return false; }
+    pool = [{ pc: pc, dc: dc, slot: r.slot || 1 }];
+    adopt(pool[0]);
+    Net.code = r.code;
+    roomWatch();
+    return false;
+  }).catch(function () { return false; });
+}
 
 /* invite/reply travel as tappable links on the web, raw codes on file:// */
 Net.url = function (code) {

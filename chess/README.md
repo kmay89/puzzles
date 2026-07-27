@@ -87,8 +87,13 @@ gfx3d.js            raw WebGL 1 renderer: lathe-turned pieces (the knight
                     springs, sliding/hopping/sinking animations
 gfx2d.js            canvas renderer with an original hand-drawn piece set;
                     also the safety net if WebGL is missing or lost
-net.js              nearby two-player: serverless WebRTC, invite/reply
-                    codes (deflated, QR-scannable), resume-after-drop
+room.js             the shared front door: four-letter room codes over the
+                    site's mailbox, the link heartbeat, the healing loop,
+                    and the keepsake a reload comes back to. Byte-identical
+                    in every game folder — tools/room-parity.js says so
+net.js              nearby two-player: WebRTC over four letters, with the
+                    serverless invite/reply codes (deflated, QR-scannable)
+                    still underneath, and resume-after-drop
 sw.js               offline shell + update notifications (bump VERSION
                     on every release)
 manifest.webmanifest, icons/
@@ -152,23 +157,34 @@ matching lesson, so a loss turns into the next thing you learn.
   underpromotions are provably right. `node chess/tools/perft.js --deep`
 - Every opening line in the book is **replayed through the engine** at
   test time; a typo cannot ship. `node chess/tools/book-check.js`
-- Nearby play is **serverless**: the invite code *is* the WebRTC offer
-  (STUN only for candidate discovery). Your moves travel directly
-  between the two devices, and an invite can carry a game-in-progress,
-  so a dropped link resumes exactly where it broke.
-- **Joining is meant to feel like magic.** Two phones held up to each
-  other is the whole interaction: each side shows a big framed code and
-  watches through its camera at the same time, so neither player has to
-  decide who scans. Every code the app sees — scanned, pasted, arriving
-  on the clipboard, typed, or tapped as a link — enters through one
-  door (`feedCode`) and advances the handshake by itself; there is no
-  "confirm" button to hunt for. The invite travels as a **tappable
-  link** (tap it and the room opens already joining); the reply travels
-  as a **bare code**, deliberately, because a link would reload the
-  host's page and throw the connection away. Scanning an invite greets
-  you by the host's name, so you can see you got the right board, and
-  the moment the boards meet both sides get the same little ceremony:
-  two kings sliding together, and the seats named.
+- **Joining is four letters.** One of you taps *Start a board* and reads
+  out something like `BUZZ`; the other types it. That's the whole
+  ritual, and it is the same one at the domino table and in HIVEMIND —
+  one front door across every game here. Boards waiting nearby also
+  show up in a list, so you can tap instead of type.
+- Play is still **serverless where it counts**: your moves travel
+  directly between the two devices (STUN only for candidate discovery).
+  The four letters buy nothing but a place to leave a handshake — a
+  WebRTC handshake is ~600 characters and can never be read aloud,
+  while four letters can. Nothing about the game passes through it.
+- **Everything underneath still works.** Offline, on `file://`, or on a
+  fork of this without the mailbox, the room falls back by itself to
+  the handshake it always had: two phones held up to each other, each
+  showing a framed code and watching through its camera at the same
+  time. Every code the app sees — scanned, pasted, arriving on the
+  clipboard, typed, or tapped as a link — enters through one door
+  (`feedCode`) and advances the handshake by itself.
+- **The link looks after itself.** A heartbeat rides the same channel
+  the moves do, so the chip above the board can tell you the round trip
+  in milliseconds — and tell you the difference between your opponent
+  thinking and your opponent being in a tunnel. If the link dies, both
+  sides quietly find each other again *under the same four letters*
+  (the host holds a key that reclaims them), the host re-states the
+  whole game in one frame, and the clocks stop while nobody can move.
+  Nobody reads out a new code, because there isn't one.
+- **A flat battery is an inconvenience, not a loss.** The code, your
+  seat and the game so far are written down after every move; the join
+  screen offers *Rejoin your board* for eight hours afterwards.
 - **Self-healing** by design: saves are written after every move and
   survive reloads; a corrupt save is quietly retired; if the 3D context
   is lost the same game continues in 2D on the spot; repeated errors

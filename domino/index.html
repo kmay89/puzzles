@@ -263,6 +263,56 @@
     opacity:0; transition:opacity .25s, transform .25s; pointer-events:none; max-width:88vw; text-align:center;
   }
   #toast.on{opacity:1; transform:translateX(-50%) translateY(-6px)}
+
+  /* ---------- four letters: the front door ----------
+     The code is the biggest thing on the sheet because reading it out is
+     the only thing anybody has to do. */
+  .codeBig{
+    font:700 clamp(2.3em,13vw,3.4em)/1 ui-monospace,Menlo,Consolas,monospace;
+    letter-spacing:.18em; text-indent:.18em; text-align:center; color:var(--glow);
+    background:rgba(0,0,0,.28); border:1px solid var(--line); border-radius:16px;
+    padding:.3em .1em .26em; margin:10px 0 4px;
+    user-select:text; -webkit-user-select:text;
+  }
+  .codeBig.pending{opacity:.5}
+  .codeWait{display:flex; align-items:center; justify-content:center; gap:8px;
+    font-size:.84rem; color:var(--soft); margin:4px 0 10px; min-height:20px; text-align:center}
+  input.codeIn{
+    width:100%; text-align:center; text-transform:uppercase;
+    font:700 clamp(1.8em,11vw,2.6em)/1.25 ui-monospace,Menlo,Consolas,monospace;
+    letter-spacing:.3em; text-indent:.3em;
+    background:rgba(0,0,0,.3); color:var(--ink); border:1px solid var(--line);
+    border-radius:14px; padding:.16em 0; margin:6px 0 2px;
+    user-select:text; -webkit-user-select:text;
+  }
+  input.codeIn:focus{border-color:var(--amber); outline:none}
+  .roomList{display:flex; flex-direction:column; gap:6px; margin:10px 0 4px}
+  .roomRow{
+    display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+    background:rgba(0,0,0,.22); border:1px solid var(--line); border-radius:12px; padding:8px 12px;
+    color:var(--ink);
+  }
+  .rrCode{font:700 1.05rem ui-monospace,Menlo,Consolas,monospace; letter-spacing:.12em; color:var(--glow); flex:none}
+  .rrTx{flex:1; min-width:0; font-size:.85rem}
+  .rrTx b{display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .rrTx i{color:var(--soft); font-style:normal; font-size:.9em}
+  .rrGo{color:var(--glow); font-size:.82rem; flex:none}
+  .roomEmpty{font-size:.85rem; color:var(--soft); text-align:center; padding:10px 4px}
+
+  /* the link's own pulse, at the table */
+  #netChip{
+    position:absolute; top:8px; left:50%; transform:translateX(-50%);
+    background:rgba(12,9,5,.82); border:1px solid var(--line); border-radius:999px;
+    padding:3px 12px; font-size:.72rem; color:var(--soft); z-index:6; white-space:nowrap;
+    display:flex; align-items:center; gap:7px;
+  }
+  #netChip .pulse{width:8px; height:8px; border-radius:50%; background:var(--good); flex:none}
+  #netChip.slow .pulse{background:var(--glow)}
+  #netChip.stale .pulse,#netChip.healing .pulse{background:var(--amber); animation:blip 1s ease-in-out infinite}
+  #netChip.lost .pulse{background:var(--bad); animation:blip 1s ease-in-out infinite}
+  #netChip.waiting .pulse{background:var(--soft)}
+  #netChip.healing,#netChip.lost{color:var(--ink); border-color:var(--amber)}
+  @keyframes blip{0%,100%{opacity:.25} 50%{opacity:1}}
 </style>
 </head>
 <body>
@@ -279,6 +329,7 @@
       <div class="score" id="scoreThem">Ellos <b>0</b></div>
     </div>
 
+    <div id="netChip" class="hide"><span class="pulse"></span><span id="netChipTx">linked</span></div>
     <div id="banner"><div class="big"></div><div class="sub"></div></div>
     <div id="toast"></div>
 
@@ -393,6 +444,7 @@
 <script src="skins.js"></script>
 <script src="gfx2d.js"></script>
 <script src="gfx3d.js"></script>
+<script src="room.js"></script>
 <script src="net.js"></script>
 <script src="app.js"></script>
 </body>

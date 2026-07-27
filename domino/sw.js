@@ -8,11 +8,11 @@
    from under somebody mid-hand would lose the hand, and a domino match
    is twenty minutes — so a new version waits, and the page decides when
    to take it. */
-var VERSION = "domino-v1";
+var VERSION = "domino-v2";
 var SHELL = [
   "./", "./index.html",
   "./rules.js", "./layout.js", "./ai.js", "./coach.js",
-  "./skins.js", "./gfx2d.js", "./gfx3d.js", "./net.js", "./app.js",
+  "./skins.js", "./gfx2d.js", "./gfx3d.js", "./room.js", "./net.js", "./app.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png", "./icons/icon-512.png",
   "./icons/icon-maskable-512.png", "./icons/apple-touch-icon.png"

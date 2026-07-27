@@ -1,9 +1,18 @@
-/* net.js — four chairs, one table, no server.
+/* net.js — four chairs, one table, no server worth the name.
 
-   Same-room four-player over WebRTC data channels. No signaling
-   server, no account: the invite and its reply are short codes you
-   paste, AirDrop, or hold up to a camera. STUN only, for candidate
-   discovery; the game itself flows directly between the devices.
+   Same-room four-player over WebRTC data channels. No account, and
+   nothing about the game leaves the four devices: they talk directly,
+   STUN only, for candidate discovery.
+
+   **Sitting down is four letters.** Whoever is the table reads out
+   something like BUZZ and the other three type it — the same front door
+   the chess room and HIVEMIND use, and the same one behind it: room.js,
+   which holds the mailbox client, the heartbeat, and the loop that puts
+   a dropped link back without asking anyone anything. Underneath it,
+   unchanged, is the handshake that needs no server at all: the invite
+   and its reply as codes you paste, AirDrop, or hold up to a camera.
+   That is what happens on file://, offline, or on a fork of this
+   without the mailbox.
 
    The transport — codes, QR, non-trickle ICE — is carried over from
    HIVEMIND's hive-link by way of the chess room, where it has already
@@ -44,7 +53,17 @@
 
    A pleasant consequence: the payload is a quarter of the size, and a
    joiner's screen is drawn from exactly the same structure as a solo
-   game's, so there is no second rendering path to keep in step.       */
+   game's, so there is no second rendering path to keep in step.
+
+   ## Coming back
+
+   A chair is remembered by name, so somebody whose phone locked or
+   whose bus went into a tunnel does not lose their bones: the healing
+   loop knocks on the same four letters again, says the same name, and
+   `seatFor()` puts them back where they were. The host re-deals the
+   views and the hand carries on. Nobody at the table has to do
+   anything, or even necessarily notice.                              */
+/* global Room */
 (function (root) {
 "use strict";
 
@@ -287,7 +306,12 @@ var Net = {
   onRoster: null,
   onLink: null,
   onDrop: null,         /* (seat) — a chair emptied                         */
-  lastHeard: 0
+  onHealth: null,       /* (state) — what the link chip renders             */
+  onRejoin: null,       /* a guest's link came back by itself               */
+  lastHeard: 0,
+  code: null,           /* the four letters, when we came in that way       */
+  vitals: null,
+  everSat: false        /* has this guest ever been at the table?           */
 };
 
 /* ---------- the host ----------
@@ -365,6 +389,12 @@ function wireHostChannel(slot) {
     try { msg = JSON.parse(e.data); } catch (err) { return; }
     if (!msg) return;
     Net.lastHeard = Date.now();
+    slot.heard = Date.now();
+
+    /* the heartbeat, on the same wire as the game (see room.js). The `_`
+       key is not one the game uses, so the two can't collide. */
+    if (msg._ === "p") { sendTo(slot, { _: "q", t: msg.t }); return; }
+    if (msg._ === "q") { if (msg.t) slot.rtt = Date.now() - msg.t; return; }
 
     if (msg.k === "hi") {
       /* the greeting is sent more than once on purpose — a channel-open
@@ -372,6 +402,13 @@ function wireHostChannel(slot) {
          this has to be idempotent */
       if (slot.claimed) { sendTo(slot, { k: "seat", seat: slot.seat, roster: Net.roster }); return; }
       var nm = cleanName(msg.name);
+      /* somebody arriving under a name that is already sitting down is
+         that same person coming back on a new link — the older one is a
+         corpse the host simply hasn't buried yet. Newest connection wins,
+         or they'd be shown to a different chair with different bones. */
+      for (var p = Net.peers.length - 1; p >= 0; p--) {
+        if (Net.peers[p] !== slot && Net.peers[p].name === nm) dropSlot(Net.peers[p]);
+      }
       var seat = seatFor(nm);
       if (seat < 0) { sendTo(slot, { k: "full" }); return; }
       slot.claimed = true;
@@ -458,21 +495,27 @@ Net.join = function (code, name) {
 function wireGuestChannel(dc) {
   Net.dc = dc;
   dc.onopen = function () {
+    var back = Net.everSat;
+    Net.everSat = true;
     /* said three times, a beat apart: the host keys a seat on this name
        and a lost greeting would put the player in the wrong chair */
-    var say = function () { Net.send({ k: "hi", name: Net.name }); };
+    var say = function () { rawSend({ k: "hi", name: Net.name }); };
     say();
     setTimeout(say, 220);
     setTimeout(say, 700);
-    if (Net.keep) clearInterval(Net.keep);
-    /* hold the NAT binding open through a quiet spell */
-    Net.keep = setInterval(function () { Net.send({ k: "ka" }); }, 2000);
+    /* the heartbeat holds the NAT binding open through a quiet spell,
+       the way the old keepalive did, and also says whether anybody is
+       actually there */
+    var v = guestVitals();
+    if (v) { if (v.on) v.well(); else v.start(); }
+    if (back && Net.onRejoin) Net.onRejoin();
   };
   dc.onmessage = function (e) {
     var msg = null;
     try { msg = JSON.parse(e.data); } catch (err) { return; }
     if (!msg) return;
     Net.lastHeard = Date.now();
+    if (Net.vitals && Net.vitals.frame(msg)) return;
     if (msg.k === "seat") {
       Net.seat = msg.seat | 0;
       Net.roster = msg.roster || [];
@@ -487,8 +530,16 @@ function wireGuestChannel(dc) {
     }
     if (Net.onMessage) Net.onMessage(msg, 0);
   };
-  dc.onclose = function () { if (Net.onDrop) Net.onDrop(-1); };
-  dc.onerror = function () { if (Net.onDrop) Net.onDrop(-1); };
+  dc.onclose = function () { guestLost(); };
+  dc.onerror = function () { guestLost(); };
+}
+/* A guest who loses the table has somewhere to go if they came in by
+   code: the same four letters, and the same name, which is what the
+   chair is remembered by. Only a paste/QR guest is genuinely stranded,
+   and only they are told so. */
+function guestLost() {
+  if (Net.code && Net.vitals && Net.vitals.on) { Net.vitals.tick(true); return; }
+  if (Net.onDrop) Net.onDrop(-1);
 }
 
 /* ---------- talking ---------- */
@@ -498,13 +549,14 @@ function sendTo(slot, obj) {
   }
   return false;
 }
-Net.send = function (obj) {
-  if (Net.role === "guest") {
-    if (Net.dc && Net.dc.readyState === "open") {
-      try { Net.dc.send(JSON.stringify(obj)); return true; } catch (e) { return false; }
-    }
-    return false;
+function rawSend(obj) {
+  if (Net.dc && Net.dc.readyState === "open") {
+    try { Net.dc.send(JSON.stringify(obj)); return true; } catch (e) { return false; }
   }
+  return false;
+}
+Net.send = function (obj) {
+  if (Net.role === "guest") return rawSend(obj);
   return Net.broadcast(obj);
 };
 Net.broadcast = function (obj) {
@@ -542,6 +594,9 @@ Net.count = function () { return Net.role === "host" ? Net.peers.length + 1 : Ne
 
 Net.close = function () {
   if (Net.keep) { clearInterval(Net.keep); Net.keep = null; }
+  if (Net.vitals) { Net.vitals.stop(); Net.vitals = null; }
+  Net.everSat = false;
+  Net.roomLeave();
   var all = Net.peers.concat(Net.pool);
   for (var i = 0; i < all.length; i++) {
     try { if (all[i].dc) { all[i].dc.onclose = null; all[i].dc.close(); } } catch (e) {}
@@ -560,6 +615,174 @@ function cleanName(n) {
     .replace(/[<>&"'`\\]/g, "").replace(/\s+/g, " ").trim().slice(0, 14);
   return s || "Jugador";
 }
+
+/* ---------- the room: four letters ----------
+   The typed-code way in, sitting on the same star of data channels as
+   the paste/QR handshake. The mailbox only ever carries handshakes; a
+   table that loses it mid-game stops healing, not playing. */
+function offerFrom(pc) {
+  return pc.createOffer()
+    .then(function (o) { return pc.setLocalDescription(o); })
+    .then(function () { return iceDone(pc); })
+    .then(function () { return pc.localDescription.sdp; });
+}
+function mintSlot() {
+  var pc = rtc(), slot = { pc: pc, dc: null, claimed: false, heard: Date.now() };
+  slot.dc = pc.createDataChannel("table", { ordered: true });
+  wireHostChannel(slot);
+  pc.onconnectionstatechange = function () {
+    if (pc.connectionState === "failed" || pc.connectionState === "closed") dropSlot(slot);
+  };
+  Net.pool.push(slot);
+  return slot;
+}
+/* open the table under four letters, or reclaim the four letters we had */
+Net.roomOpen = function (o) {
+  o = o || {};
+  if (typeof Room === "undefined" || Net.role !== "host") return Promise.resolve(null);
+  var slot = mintSlot();
+  return offerFrom(slot.pc).then(function (sdp) {
+    return Room.open(sdp, { host: Net.name, name: o.name, seats: SEATS });
+  }).then(function (r) {
+    if (!r) { dropSlot(slot); try { slot.pc.close(); } catch (e) {} return null; }
+    slot.slot = r.slot || 1;
+    Net.code = r.code;
+    roomWatch();
+    Net.spare(); Net.spare();   /* four people tap Join in the same second */
+    return r;
+  }).catch(function () { return null; });
+};
+/* Spares are what make both arriving and *returning* feel like nothing
+   happened: there is always a pigeonhole already waiting. */
+Net.spare = function () {
+  if (typeof Room === "undefined" || Net.role !== "host" || !Room.code) return Promise.resolve(null);
+  if (Net.pool.length >= 4 || Net.seatsFree() <= 0) return Promise.resolve(null);
+  var slot = mintSlot();
+  return offerFrom(slot.pc).then(function (sdp) { return Room.spare(sdp); }).then(function (r) {
+    if (!r || !r.slot) { dropSlot(slot); try { slot.pc.close(); } catch (e) {} return null; }
+    slot.slot = r.slot;
+    return r;
+  }).catch(function () { dropSlot(slot); return null; });
+};
+var pollT = null, sweepT = null;
+function roomWatch() {
+  if (pollT) clearInterval(pollT);
+  pollT = setInterval(function () {
+    if (typeof Room === "undefined" || !Room.code || Net.role !== "host") return;
+    Room.poll().then(function (r) {
+      if (!r) return;
+      var list = r.answers || [], i, j;
+      for (i = 0; i < list.length; i++) {
+        for (j = 0; j < Net.pool.length; j++) {
+          if (Net.pool[j].slot === list[i].slot) {
+            Net.pool[j].pc.setRemoteDescription({ type: "answer", sdp: list[i].answer })
+              .catch(function () {});
+            break;
+          }
+        }
+      }
+      if (list.length || r.free < 1) Net.spare();
+    });
+  }, 2400);
+  hostSweep(true);
+}
+/* The host's own monitoring. A chair whose phone has quietly stopped
+   talking looks exactly like a chair whose owner is thinking, and the
+   difference matters: one should go back to being played by the house
+   so the hand can carry on. */
+function hostSweep(on) {
+  if (sweepT) { clearInterval(sweepT); sweepT = null; }
+  if (!on) return;
+  sweepT = setInterval(function () {
+    var now = Date.now();
+    for (var i = Net.peers.length - 1; i >= 0; i--) {
+      var p = Net.peers[i];
+      sendTo(p, { _: "p", t: now });
+      if (p.heard && now - p.heard > 14000) dropSlot(p);
+    }
+  }, 3000);
+}
+
+/* the guest's heartbeat, and the loop that puts a lost chair back */
+function guestVitals() {
+  if (Net.vitals) return Net.vitals;
+  if (typeof Room === "undefined") return null;
+  Net.vitals = Room.vitals({
+    every: 2000, slowMs: 900, staleMs: 6000, lostMs: 11000,
+    send: function (m) { rawSend(m); },
+    down: function () { return !(Net.dc && Net.dc.readyState === "open"); },
+    heal: function () {
+      if (!Net.code) return false;
+      return Net.roomJoin(Net.code, Net.name).then(function () { return false; },
+                                                   function () { return false; });
+    },
+    change: function (s, info) { if (Net.onHealth) Net.onHealth(s, info); }
+  });
+  return Net.vitals;
+}
+
+Net.roomJoin = function (code, name) {
+  if (typeof Room === "undefined") return Promise.resolve(null);
+  Net.role = "guest";
+  Net.name = cleanName(name || Net.name);
+  return Room.knock(code, Net.name).then(function (r) {
+    if (!r) return null;
+    if (r.error) return r;
+    if (Net.pc) { try { Net.pc.close(); } catch (e) {} Net.pc = null; }
+    var pc = rtc();
+    Net.pc = pc;
+    Net.code = Room.code;
+    pc.ondatachannel = function (e) { wireGuestChannel(e.channel); };
+    pc.onconnectionstatechange = function () {
+      if (pc.connectionState === "failed" || pc.connectionState === "closed") guestLost();
+    };
+    return pc.setRemoteDescription({ type: "offer", sdp: r.offer })
+      .then(function () { return pc.createAnswer(); })
+      .then(function (a) { return pc.setLocalDescription(a); })
+      .then(function () { return iceDone(pc); })
+      .then(function () { return Room.reply(r.slot, pc.localDescription.sdp); })
+      .then(function (ok) {
+        if (!ok) return { error: "that table stopped listening — try again" };
+        Room.remember({ role: "guest", code: Room.code, name: Net.name, title: r.name || "" });
+        var v = guestVitals();
+        if (v && !v.on) v.start();
+        return { ok: true, name: r.name, host: r.host };
+      });
+  });
+};
+Net.roomList = function () {
+  return (typeof Room === "undefined") ? Promise.resolve(null) : Room.list();
+};
+/* the hand is dealt: stop advertising, stay reachable — latecomers are
+   welcome at a domino table, and so is anybody coming back */
+Net.roomStarted = function () {
+  if (typeof Room !== "undefined" && Net.role === "host" && Room.code) Room.shut(true, true);
+};
+Net.roomLeave = function () {
+  if (typeof Room !== "undefined" && Net.role === "host" && Room.code) Room.shut(false);
+  if (pollT) { clearInterval(pollT); pollT = null; }
+  hostSweep(false);
+  Net.code = null;
+};
+Net.health = function () {
+  var v = Net.vitals;
+  if (Net.role === "host") {
+    var here = 0, rtt = 0, n = 0, i;
+    for (i = 0; i < Net.peers.length; i++) {
+      here++;
+      if (Net.peers[i].rtt) { rtt += Net.peers[i].rtt; n++; }
+    }
+    return { state: here ? "live" : "waiting", players: here + 1,
+             rtt: n ? Math.round(rtt / n) : 0, code: Net.code,
+             words: here ? (here + 1) + " at the table" : "waiting for players" };
+  }
+  return { state: v ? v.state : "off", rtt: v ? v.rtt : 0,
+           words: v ? v.words() : "not linked", code: Net.code };
+};
+Net.healing = function () {
+  var v = Net.vitals;
+  return !!(v && (v.state === "healing" || v.state === "lost" || v.state === "stale"));
+};
 
 /* invites travel as tappable links on the web and as raw codes on
    file://, where a link would have nowhere to go */
